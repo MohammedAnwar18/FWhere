@@ -202,7 +202,7 @@
 
     <script>
         // --- CONFIGURATION ---
-        mapboxgl.accessToken = 'pk.eyJ1IjoibW9oYW1tZWQt1MzMSIsImEiOiJjbWlsaWh1anAxM2kzM2dyNHR5eTU4am9hIn0.arsZikWNpuoceyWdnM30VA';
+        mapboxgl.accessToken = 'pk.eyJ1IjoibW9oYW1tZWQtMTMzMSIsImEiOiJjbWlsaWh1anAxM2kzM2dyNHR5eTU4am9hIn0.arsZikWNpuoceyWdnM30VA';
 
         // --- STATE ---
         let map;
@@ -210,10 +210,22 @@
 
         // Gesture Logic State
         let panStart = null;
-        let previousPinchDist = null;
+        let pinchStartDist = null;
+        let pinchStartZoom = null;
 
-        // Smoothing
-        const SMOOTHING_FACTOR = 0.15;
+        // Physics / Smoothing State
+        let targetZoom = 1.5;
+        let currentZoom = 1.5;
+
+        // Pan Velocity
+        let panVelocityX = 0;
+        let panVelocityY = 0;
+        let isPanning = false;
+
+        // Smoothing Factors (Lower = Heavier/Smoother)
+        const ZOOM_LERP = 0.08;
+        const SMOOTHING_FACTOR = 0.15; // Input smoothing
+
         let smoothX = 0;
         let smoothY = 0;
         let smoothPinchDist = null;
@@ -265,8 +277,41 @@
                     'space-color': 'rgb(11, 11, 25)',
                     'star-intensity': 0.6
                 });
+
+                // Init Zoom target
+                targetZoom = map.getZoom();
+                currentZoom = targetZoom;
             });
         }
+
+        // --- PHYSICS LOOP ---
+        function updatePhysics() {
+            if (!map) return;
+
+            // 1. Apply Smooth Zoom
+            // Interpolate currentZoom towards targetZoom
+            const zoomDiff = targetZoom - currentZoom;
+            if (Math.abs(zoomDiff) > 0.001) {
+                currentZoom += zoomDiff * ZOOM_LERP;
+                map.setZoom(currentZoom);
+            }
+
+            // 2. Apply Momentum Pan (if not actively panning)
+            if (!isPanning) {
+                // Friction
+                panVelocityX *= 0.90;
+                panVelocityY *= 0.90;
+
+                if (Math.abs(panVelocityX) > 0.5 || Math.abs(panVelocityY) > 0.5) {
+                    map.panBy([-panVelocityX, -panVelocityY], { animate: false });
+                }
+            }
+
+            requestAnimationFrame(updatePhysics);
+        }
+
+        // Start Physics Loop
+        requestAnimationFrame(updatePhysics);
 
         // --- GESTURE LOGIC ---
 
@@ -302,8 +347,9 @@
         }
 
         function resetGestures() {
+            isPanning = false;
             panStart = null;
-            previousPinchDist = null;
+            pinchStartDist = null;
             cardPan.classList.remove('active');
             cardZoom.classList.remove('active');
         }
@@ -312,19 +358,17 @@
             // Pointer used for movement (Index Knuckle)
             const pointer = landmarks[5];
 
-            // 1. Smooth the pointer
+            // 1. Input Smoothing (Low pass filter)
             smoothX += (pointer.x - smoothX) * SMOOTHING_FACTOR;
             smoothY += (pointer.y - smoothY) * SMOOTHING_FACTOR;
 
             // 2. Measure Distances
-            // Pinch Distance (Thumb Tip 4 - Index Tip 8)
             const rawPinchDist = calculateDistance(landmarks[4], landmarks[8]);
 
-            // Smooth the pinch distance
             if (smoothPinchDist === null) smoothPinchDist = rawPinchDist;
             smoothPinchDist += (rawPinchDist - smoothPinchDist) * 0.15;
 
-            // Fist Logic: Check if fingers are curled
+            // Fist Logic
             const middleTipDist = calculateDistance(landmarks[12], landmarks[0]);
             const ringTipDist = calculateDistance(landmarks[16], landmarks[0]);
             const FIST_THRESHOLD = 0.35;
@@ -334,51 +378,59 @@
 
             if (isFist) {
                 // *** PAN MODE ***
+                isPanning = true;
+
                 cardPan.classList.add('active');
                 cardZoom.classList.remove('active');
-
-                // Reset Zoom
-                previousPinchDist = null;
+                pinchStartDist = null; // Reset Zoom
 
                 if (panStart === null) {
                     panStart = { x: smoothX, y: smoothY };
                 } else {
-                    const sensitivity = 3.5;
-                    const dx = (smoothX - panStart.x) * sensitivity;
-                    const dy = (smoothY - panStart.y) * sensitivity;
+                    const width = window.innerWidth;
+                    const height = window.innerHeight;
 
-                    if (Math.abs(dx) > 0.001 || Math.abs(dy) > 0.001) {
-                        const width = window.innerWidth;
-                        const height = window.innerHeight;
-                        map.panBy([-dx * width, -dy * height], { animate: false });
-                        panStart = { x: smoothX, y: smoothY };
-                    }
+                    // Calculate Delta for one frame
+                    const sensitivity = 4.0;
+                    const dx = (smoothX - panStart.x) * width * sensitivity;
+                    const dy = (smoothY - panStart.y) * height * sensitivity;
+
+                    // Direct Pan without inertia during grab
+                    map.panBy([-dx, -dy], { animate: false });
+
+                    // Store Velocity for release
+                    panVelocityX = dx;
+                    panVelocityY = dy;
+
+                    // Reset start to calculate fresh delta next frame
+                    panStart = { x: smoothX, y: smoothY };
                 }
 
             } else {
-                // *** ZOOM MODE (Spread/Pinch) ***
+                // *** ZOOM MODE ***
+                isPanning = false; // Release Pan -> Momentum takes over in updatePhysics()
+
                 cardPan.classList.remove('active');
                 cardZoom.classList.add('active');
 
-                // Disengage Pan
                 panStart = null;
 
-                if (previousPinchDist === null) {
-                    previousPinchDist = smoothPinchDist;
+                // Threshold
+                if (pinchStartDist === null) {
+                    pinchStartDist = smoothPinchDist;
+                    pinchStartZoom = targetZoom; // Base on CURRENT TARGET
                 } else {
-                    const delta = smoothPinchDist - previousPinchDist;
+                    // Calculate Scale Factor
+                    const distDelta = smoothPinchDist - pinchStartDist;
 
-                    // Deadzone to prevent micro-jitters
-                    if (Math.abs(delta) > 0.003) {
-                        // Spread (positive delta) -> Zoom In (+)
-                        // Close (negative delta) -> Zoom Out (-)
-                        const zoomSensitivity = 6.0; // Adjust for speed
-                        const zoomChange = delta * zoomSensitivity;
+                    if (Math.abs(distDelta) > 0.01) {
+                        const zoomSpeed = 8.0;
+                        // Apply to TARGET, let physics loop handle smoothness
+                        targetZoom = pinchStartZoom + (distDelta * zoomSpeed);
 
-                        map.setZoom(map.getZoom() + zoomChange);
-
-                        // Update previous to track relative change
-                        previousPinchDist = smoothPinchDist;
+                        // Clamp Zoom
+                        if (targetZoom < 0) targetZoom = 0;
+                        if (targetZoom > 22) targetZoom = 22;
                     }
                 }
             }
