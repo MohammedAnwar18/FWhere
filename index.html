@@ -1,0 +1,322 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Realistic Earth - Hand Controlled</title>
+
+    <!-- Three.js -->
+    <script type="importmap">
+        {
+            "imports": {
+                "three": "https://unpkg.com/three@0.160.0/build/three.module.js"
+            }
+        }
+    </script>
+
+    <!-- MediaPipe -->
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/control_utils/control_utils.js"
+        crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js"
+        crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            background: #000;
+            overflow: hidden;
+            font-family: sans-serif;
+        }
+
+        #canvas-container {
+            width: 100vw;
+            height: 100vh;
+        }
+
+        #ui-layer {
+            position: absolute;
+            top: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 10px;
+            z-index: 100;
+            pointer-events: none;
+        }
+
+        #status-box {
+            background: rgba(0, 0, 0, 0.7);
+            color: #0f0;
+            padding: 15px 25px;
+            border-radius: 30px;
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            font-family: monospace;
+            text-align: center;
+            min-width: 300px;
+        }
+
+        #cam-container {
+            position: absolute;
+            bottom: 20px;
+            right: 20px;
+            width: 320px;
+            height: 180px;
+            background: #111;
+            border-radius: 15px;
+            overflow: hidden;
+            border: 2px solid #555;
+            display: none;
+            /* Hidden until started */
+        }
+
+        #input-video {
+            position: absolute;
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            transform: scaleX(-1);
+            opacity: 0.6;
+        }
+
+        #output-canvas {
+            position: absolute;
+            width: 100%;
+            height: 100%;
+            transform: scaleX(-1);
+        }
+
+        button {
+            pointer-events: auto;
+            background: linear-gradient(135deg, #6366f1, #a855f7);
+            color: white;
+            border: none;
+            padding: 12px 30px;
+            border-radius: 50px;
+            font-weight: bold;
+            cursor: pointer;
+            box-shadow: 0 4px 15px rgba(100, 100, 255, 0.4);
+        }
+    </style>
+</head>
+
+<body>
+
+    <div id="ui-layer">
+        <div id="status-box">Waiting for Camera...</div>
+        <button id="start-btn">START CAMERA & GESTURES</button>
+    </div>
+
+    <div id="cam-container">
+        <video id="input-video" playsinline></video>
+        <canvas id="output-canvas"></canvas>
+    </div>
+
+    <div id="canvas-container"></div>
+
+    <script type="module">
+        import * as THREE from 'three';
+
+        // --- 1. THREE.JS SETUP ---
+        const scene = new THREE.Scene();
+        scene.background = new THREE.Color(0x020202);
+
+        const camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 1000);
+        camera.position.z = 18; // Initial Zoom
+
+        const renderer = new THREE.WebGLRenderer({ antialias: true });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        renderer.setPixelRatio(window.devicePixelRatio);
+        document.getElementById('canvas-container').appendChild(renderer.domElement);
+
+        // Lighting
+        const ambientLight = new THREE.AmbientLight(0xffffff, 0.2); // Soft light
+        scene.add(ambientLight);
+
+        const sunLight = new THREE.DirectionalLight(0xffffff, 2.0);
+        sunLight.position.set(50, 20, 30);
+        scene.add(sunLight);
+
+        // --- 2. EARTH CREATION (High Res) ---
+        const textureLoader = new THREE.TextureLoader();
+        const earthGroup = new THREE.Group();
+        scene.add(earthGroup);
+
+        // A. Earth Sphere (High Res 8k Texture)
+        const earthGeo = new THREE.SphereGeometry(5, 128, 128); // Higher segment count for smoothness
+        const earthMat = new THREE.MeshStandardMaterial({
+            map: textureLoader.load('https://unpkg.com/three-globe/example/img/earth-blue-marble.jpg'),
+            bumpMap: textureLoader.load('https://unpkg.com/three-globe/example/img/earth-topology.png'),
+            bumpScale: 0.2,
+            roughness: 0.5,
+            metalness: 0.1
+        });
+        const earth = new THREE.Mesh(earthGeo, earthMat);
+        earthGroup.add(earth);
+
+        // B. Cloud Layer (Moving)
+        const cloudGeo = new THREE.SphereGeometry(5.08, 64, 64);
+        const cloudMat = new THREE.MeshStandardMaterial({
+            map: textureLoader.load('https://raw.githubusercontent.com/mrdoob/three.js/master/examples/textures/planets/earth_clouds_2048.png'),
+            transparent: true,
+            opacity: 0.3,
+            blending: THREE.AdditiveBlending,
+            side: THREE.DoubleSide
+        });
+        const clouds = new THREE.Mesh(cloudGeo, cloudMat);
+        earthGroup.add(clouds);
+
+        // C. Stars
+        const starsGeo = new THREE.BufferGeometry();
+        const starPos = [];
+        for (let i = 0; i < 3000; i++) {
+            const x = (Math.random() - 0.5) * 600;
+            const y = (Math.random() - 0.5) * 600;
+            const z = (Math.random() - 0.5) * 600;
+            starPos.push(x, y, z);
+        }
+        starsGeo.setAttribute('position', new THREE.Float32BufferAttribute(starPos, 3));
+        const stars = new THREE.Points(starsGeo, new THREE.PointsMaterial({ color: 0xffffff, size: 0.5 }));
+        scene.add(stars);
+
+
+        // --- 3. GESTURE LOGIC VARIABLES ---
+        let targetRotationY = 0;
+        let targetCameraZ = 18; // Default Zoom
+        let isHandDetected = false;
+
+        // --- 4. ANIMATION LOOP ---
+        function animate() {
+            requestAnimationFrame(animate);
+
+            // Smooth Interpolation (Physics-like feel)
+            // Rotate Earth
+            earth.rotation.y += (targetRotationY - earth.rotation.y) * 0.05; // Softer rotation
+            clouds.rotation.y += 0.0003; // Auto-move clouds slightly
+
+            // Camera Zoom
+            camera.position.z += (targetCameraZ - camera.position.z) * 0.1;
+
+            renderer.render(scene, camera);
+        }
+        animate();
+
+        // Window Resize
+        window.addEventListener('resize', () => {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        });
+
+
+        // --- 5. MEDIAPIPE HANDS SETUP ---
+        const videoElement = document.getElementById('input-video');
+        const canvasElement = document.getElementById('output-canvas');
+        const canvasCtx = canvasElement.getContext('2d');
+        const statusBox = document.getElementById('status-box');
+
+        function onResults(results) {
+            canvasCtx.save();
+            canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
+            canvasCtx.drawImage(results.image, 0, 0, canvasElement.width, canvasElement.height);
+
+            if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
+                isHandDetected = true;
+                const landmarks = results.multiHandLandmarks[0];
+
+                // Draw Skeleton
+                drawConnectors(canvasCtx, landmarks, HAND_CONNECTIONS, { color: '#00FF00', lineWidth: 4 });
+                drawLandmarks(canvasCtx, landmarks, { color: '#FF0000', lineWidth: 2 });
+
+                // --- LOGIC ---
+                // 1. Rotation (Index Finger Tip X)
+                const x = landmarks[8].x;
+                let xOffset = x - 0.5; // -0.5 (Left) to 0.5 (Right)
+
+                // Deadzone
+                if (Math.abs(xOffset) < 0.05) xOffset = 0;
+
+                // Update Target Rotation (Continuous spin based on hand pos)
+                if (Math.abs(xOffset) > 0) {
+                    targetRotationY += xOffset * 0.1; // Speed
+                }
+
+                // 2. Adaptive Zoom (City Level Logic)
+                const thumb = landmarks[4];
+                const index = landmarks[8];
+                const dist = Math.sqrt(Math.pow(thumb.x - index.x, 2) + Math.pow(thumb.y - index.y, 2));
+
+                // Calculate Distance to Surface
+                const distToSurface = Math.max(0.1, camera.position.z - 5); // Radius is 5
+
+                // Sensitivity decreases as we get closer (Precision Mode)
+                const zoomSpeed = 0.05 * distToSurface;
+
+                let zoomAction = "--";
+
+                if (dist < 0.05) { // PINCH -> ZOOM OUT
+                    targetCameraZ += zoomSpeed * 5; // Faster out
+                    zoomAction = "ZOOM OUT";
+                } else if (dist > 0.15) { // OPEN -> ZOOM IN
+                    targetCameraZ -= zoomSpeed * 5;
+                    zoomAction = "ZOOM IN (Closing)";
+                } else {
+                    zoomAction = "HOLD";
+                }
+
+                // EXTREME ZOOM LIMITS
+                // Allow getting very close (5.1) -> 0.1 units from surface
+                if (targetCameraZ < 5.2) targetCameraZ = 5.2;
+                if (targetCameraZ > 50) targetCameraZ = 50;
+
+                statusBox.innerHTML = `HAND DETECTED<br>Action: ${zoomAction}<br>Surface Dist: ${distToSurface.toFixed(2)}`;
+                statusBox.style.color = "#0f0";
+
+            } else {
+                isHandDetected = false;
+                statusBox.innerHTML = `NO HAND DETECTED`;
+                statusBox.style.color = "#ff0";
+            }
+            canvasCtx.restore();
+        }
+
+        const hands = new Hands({ locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}` });
+        hands.setOptions({
+            maxNumHands: 1,
+            modelComplexity: 1,
+            minDetectionConfidence: 0.5,
+            minTrackingConfidence: 0.5
+        });
+        hands.onResults(onResults);
+
+        // Start Camera Button
+        document.getElementById('start-btn').addEventListener('click', async () => {
+            document.getElementById('start-btn').style.display = 'none';
+            document.getElementById('status-box').innerText = "Starting Camera...";
+
+            const stream = await navigator.mediaDevices.getUserMedia({ video: { width: 640, height: 360 } });
+            videoElement.srcObject = stream;
+            await videoElement.play();
+
+            document.getElementById('cam-container').style.display = 'block';
+
+            // Adjust canvas size
+            canvasElement.width = videoElement.videoWidth;
+            canvasElement.height = videoElement.videoHeight;
+
+            // Loop
+            const cameraLoop = async () => {
+                await hands.send({ image: videoElement });
+                requestAnimationFrame(cameraLoop);
+            };
+            cameraLoop();
+        });
+
+    </script>
+</body>
+
+</html>
