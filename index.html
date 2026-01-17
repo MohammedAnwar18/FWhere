@@ -336,32 +336,71 @@
             canvasCtx.restore();
         }
 
-        // Camera Start
+        // Camera Start with Robust Debugging
         const hands = new Hands({ locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}` });
         hands.setOptions({ maxNumHands: 1, minDetectionConfidence: 0.5, minTrackingConfidence: 0.5 });
         hands.onResults(onResults);
 
         document.getElementById('start-btn').addEventListener('click', async () => {
-            document.getElementById('start-btn').style.display = 'none';
-            statusBox.innerText = "Loading Camera...";
+            const btn = document.getElementById('start-btn');
+            const status = document.getElementById('status-box');
+
+            btn.style.display = 'none';
+            status.style.color = "#FFD700"; // Gold
+            status.innerText = "Requesting Camera Access...";
+
+            // 1. Security Check
+            if (window.location.protocol === 'file:') {
+                alert("⚠️ WARNING: You are running this file directly!");
+                status.innerHTML = "Browser may block camera on local files.<br>Try Firefox or use a local server.";
+                status.style.color = "#FF4444";
+                // We continue anyway just in case it works (Firefox)
+            }
 
             try {
+                // 2. Request Stream
+                status.innerText = "Please click 'Allow' in the popup...";
                 const stream = await navigator.mediaDevices.getUserMedia({ video: { width: 320, height: 240 } });
+
+                status.innerText = "Camera Started. Loading AI...";
                 videoElement.srcObject = stream;
                 await videoElement.play();
 
+                // 3. Setup UI
                 document.getElementById('cam-container').style.display = 'block';
                 canvasElement.width = videoElement.videoWidth;
                 canvasElement.height = videoElement.videoHeight;
 
+                status.innerText = "Starting Hand Tracking...";
+                status.style.color = "#00FF00";
+
+                // 4. Start Loop
                 const cameraLoop = async () => {
-                    await hands.send({ image: videoElement });
-                    requestAnimationFrame(cameraLoop);
+                    if (!videoElement.paused && !videoElement.ended) {
+                        try {
+                            await hands.send({ image: videoElement });
+                        } catch (e) {
+                            console.error(e);
+                        }
+                        requestAnimationFrame(cameraLoop);
+                    }
                 };
                 cameraLoop();
+
             } catch (e) {
-                alert("Camera Error: " + e.message);
-                statusBox.innerText = "Camera Failed";
+                console.error(e);
+                btn.style.display = 'inline-block'; // Show button again
+                document.getElementById('cam-container').style.display = 'none';
+
+                status.style.color = "#FF0000";
+                if (e.name === 'NotAllowedError' || e.name === 'PermissionDeniedError') {
+                    status.innerText = "❌ Permission Denied. Please Refresh and Allow Camera.";
+                } else if (e.name === 'NotFoundError') {
+                    status.innerText = "❌ No Camera Found on this device.";
+                } else {
+                    status.innerText = "❌ Error: " + e.message;
+                }
+                alert("Camera Failed: " + e.message);
             }
         });
     </script>
