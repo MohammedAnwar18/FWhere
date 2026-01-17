@@ -60,6 +60,13 @@
             overflow: hidden;
             background: #222;
             margin-bottom: 12px;
+            border: 2px solid transparent;
+            transition: border-color 0.3s;
+        }
+
+        /* Edge indicators */
+        .camera-feed.edge-active {
+            border-color: #00ff88;
         }
 
         #input_video {
@@ -171,7 +178,7 @@
     <div class="loader" id="loader">Initializing Camera & Map...</div>
 
     <div class="controls-container">
-        <div class="camera-feed">
+        <div class="camera-feed" id="cameraContainer">
             <video id="input_video" disablePictureInPicture playsinline></video>
             <canvas id="output_canvas"></canvas>
         </div>
@@ -188,7 +195,7 @@
             <svg class="hud-icon" viewBox="0 0 24 24">
                 <path d="M18,9V4h-2v5h-2V2h-2v7h-2V5H8v4H6v6.5c0,4.69,3.81,8.5,8.5,8.5s8.5-3.81,8.5-8.5V9H18z" />
             </svg>
-            <span>Fist to Pan</span>
+            <span>Fist + Edge to Fly</span>
         </div>
         <div class="hud-card" id="card-zoom">
             <svg class="hud-icon" viewBox="0 0 24 24">
@@ -196,7 +203,7 @@
                     d="M21.71,20.29l-5.01-5.01C17.54,14.03,18,12.57,18,11c-0.01-3.87-3.14-7-7-7c-3.86,0-7,3.13-7,7c0,3.86,3.13,7,7,7 c1.57,0,3.03-0.46,4.28-1.3l5.01,5.01L21.71,20.29z M11,16c-2.76,0-5-2.24-5-5s2.24-5,5-5s5,2.24,5,5S13.76,16,11,16z" />
                 <path d="M13,10h-2v2h-2v-2H7V8h2V6h2v2h2V10z" />
             </svg>
-            <span>Spread to Zoom</span>
+            <span>Hold Open to Zoom</span>
         </div>
     </div>
 
@@ -208,27 +215,24 @@
         let map;
         let isCameraRunning = false;
 
-        // Gesture Logic State
-        let panStart = null;
-        let pinchStartDist = null;
-        let pinchStartZoom = null;
-
-        // Physics / Smoothing State
+        // Physics State
         let targetZoom = 1.5;
         let currentZoom = 1.5;
-
-        // Pan Velocity
         let panVelocityX = 0;
         let panVelocityY = 0;
+        let autoPanX = 0;
+        let autoPanY = 0;
         let isPanning = false;
 
-        // Smoothing Factors (Lower = Heavier/Smoother)
-        const ZOOM_LERP = 0.08;
+        // Constants
+        const ZOOM_LERP = 0.05; // Smoothing for zoom
         const SMOOTHING_FACTOR = 0.15; // Input smoothing
 
-        let smoothX = 0;
-        let smoothY = 0;
-        let smoothPinchDist = null;
+        // State Tracking
+        let smoothX = 0.5;
+        let smoothY = 0.5;
+        let smoothPinchDist = 0;
+        let panStartRaw = null; // Start position for 1:1 drag
 
         // DOM Elements
         const videoElement = document.getElementById('input_video');
@@ -237,6 +241,7 @@
         const statusDot = document.getElementById('statusDot');
         const statusText = document.getElementById('statusText');
         const loader = document.getElementById('loader');
+        const cameraContainer = document.getElementById('cameraContainer');
 
         const cardPan = document.getElementById('card-pan');
         const cardZoom = document.getElementById('card-zoom');
@@ -245,22 +250,7 @@
         function initMap() {
             map = new mapboxgl.Map({
                 container: 'map',
-                style: {
-                    version: 8,
-                    sources: {
-                        'google-satellite': {
-                            type: 'raster',
-                            tiles: [
-                                'https://mt0.google.com/vt/lyrs=s&x={x}&y={y}&z={z}'
-                            ],
-                            tileSize: 256,
-                            attribution: 'Google Maps'
-                        }
-                    },
-                    layers: [
-                        { id: 'google-satellite-layer', type: 'raster', source: 'google-satellite' }
-                    ]
-                },
+                style: 'mapbox://styles/mapbox/satellite-v9',
                 projection: 'globe',
                 zoom: 1.5,
                 center: [30, 15],
@@ -270,6 +260,19 @@
             });
 
             map.on('style.load', () => {
+                map.addSource('google-satellite', {
+                    type: 'raster',
+                    tiles: ['https://mt0.google.com/vt/lyrs=s&x={x}&y={y}&z={z}'],
+                    tileSize: 256
+                });
+                if (!map.getLayer('google-satellite-layer')) {
+                    map.addLayer({
+                        id: 'google-satellite-layer',
+                        type: 'raster',
+                        source: 'google-satellite',
+                        paint: {}
+                    });
+                }
                 map.setFog({
                     'color': 'rgb(186, 210, 235)',
                     'high-color': 'rgb(36, 92, 223)',
@@ -277,8 +280,6 @@
                     'space-color': 'rgb(11, 11, 25)',
                     'star-intensity': 0.6
                 });
-
-                // Init Zoom target
                 targetZoom = map.getZoom();
                 currentZoom = targetZoom;
             });
@@ -288,19 +289,33 @@
         function updatePhysics() {
             if (!map) return;
 
-            // 1. Apply Smooth Zoom
-            // Interpolate currentZoom towards targetZoom
+            // 1. ZOOM LERP
+            // Smoothly move towards target zoom
             const zoomDiff = targetZoom - currentZoom;
             if (Math.abs(zoomDiff) > 0.001) {
                 currentZoom += zoomDiff * ZOOM_LERP;
                 map.setZoom(currentZoom);
+            } else {
+                currentZoom = targetZoom;
             }
 
-            // 2. Apply Momentum Pan (if not actively panning)
-            if (!isPanning) {
-                // Friction
-                panVelocityX *= 0.90;
-                panVelocityY *= 0.90;
+            // 2. PANNING LOGIC
+            // Combine Friction-based inertia AND Continuous Edge Panning
+
+            if (isPanning) {
+                // If actively panning, we might have "Auto Pan" from edges
+                if (Math.abs(autoPanX) > 0 || Math.abs(autoPanY) > 0) {
+                    // Continuous movement
+                    map.panBy([-autoPanX * 20, -autoPanY * 20], { animate: false });
+
+                    // Add to velocity just in case we release
+                    panVelocityX = autoPanX * 20;
+                    panVelocityY = autoPanY * 20;
+                }
+            } else {
+                // Not panning -> Apply Inertia (Friction)
+                panVelocityX *= 0.92;
+                panVelocityY *= 0.92;
 
                 if (Math.abs(panVelocityX) > 0.5 || Math.abs(panVelocityY) > 0.5) {
                     map.panBy([-panVelocityX, -panVelocityY], { animate: false });
@@ -310,7 +325,6 @@
             requestAnimationFrame(updatePhysics);
         }
 
-        // Start Physics Loop
         requestAnimationFrame(updatePhysics);
 
         // --- GESTURE LOGIC ---
@@ -327,12 +341,8 @@
             if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
                 const landmarks = results.multiHandLandmarks[0];
 
-                // Styles
-                const handStyle = { color: '#00ff88', lineWidth: 2 };
-                const landmarkStyle = { color: '#ffffff', lineWidth: 1, radius: 2 };
-
-                drawConnectors(canvasCtx, landmarks, HAND_CONNECTIONS, handStyle);
-                drawLandmarks(canvasCtx, landmarks, landmarkStyle);
+                drawConnectors(canvasCtx, landmarks, HAND_CONNECTIONS, { color: '#00ff88', lineWidth: 2 });
+                drawLandmarks(canvasCtx, landmarks, { color: '#ffffff', lineWidth: 1, radius: 2 });
 
                 processGestures(landmarks);
 
@@ -348,91 +358,127 @@
 
         function resetGestures() {
             isPanning = false;
-            panStart = null;
-            pinchStartDist = null;
+            autoPanX = 0;
+            autoPanY = 0;
+            panStartRaw = null;
+            cameraContainer.classList.remove('edge-active');
             cardPan.classList.remove('active');
             cardZoom.classList.remove('active');
         }
 
         function processGestures(landmarks) {
-            // Pointer used for movement (Index Knuckle)
-            const pointer = landmarks[5];
+            const pointer = landmarks[5]; // Index knuckle
 
-            // 1. Input Smoothing (Low pass filter)
+            // 1. Input Smoothing
             smoothX += (pointer.x - smoothX) * SMOOTHING_FACTOR;
             smoothY += (pointer.y - smoothY) * SMOOTHING_FACTOR;
 
             // 2. Measure Distances
             const rawPinchDist = calculateDistance(landmarks[4], landmarks[8]);
 
-            if (smoothPinchDist === null) smoothPinchDist = rawPinchDist;
+            if (smoothPinchDist === 0) smoothPinchDist = rawPinchDist;
             smoothPinchDist += (rawPinchDist - smoothPinchDist) * 0.15;
 
-            // Fist Logic
+            // Fist Detection
             const middleTipDist = calculateDistance(landmarks[12], landmarks[0]);
             const ringTipDist = calculateDistance(landmarks[16], landmarks[0]);
-            const FIST_THRESHOLD = 0.35;
+            const FIST_THRESHOLD = 0.30;
             const isFist = (middleTipDist < FIST_THRESHOLD && ringTipDist < FIST_THRESHOLD);
 
             // --- STATE MACHINE ---
 
             if (isFist) {
-                // *** PAN MODE ***
+                // *** PAN MODE (Hybrid: 1:1 Center + Continuous Edge) ***
                 isPanning = true;
 
                 cardPan.classList.add('active');
                 cardZoom.classList.remove('active');
-                pinchStartDist = null; // Reset Zoom
 
-                if (panStart === null) {
-                    panStart = { x: smoothX, y: smoothY };
+                // A. Check Edges for "Infinite Flight"
+                // Edges: < 0.15 or > 0.85
+                const EDGE_THRESHOLD = 0.20;
+                autoPanX = 0;
+                autoPanY = 0;
+
+                // Center is 0.5, 0.5
+                // X Axis
+                if (smoothX < EDGE_THRESHOLD) autoPanX = -(EDGE_THRESHOLD - smoothX) / EDGE_THRESHOLD; // Left (-1 to 0)
+                if (smoothX > 1 - EDGE_THRESHOLD) autoPanX = (smoothX - (1 - EDGE_THRESHOLD)) / EDGE_THRESHOLD; // Right (0 to 1)
+
+                // Y Axis
+                if (smoothY < EDGE_THRESHOLD) autoPanY = -(EDGE_THRESHOLD - smoothY) / EDGE_THRESHOLD; // Up
+                if (smoothY > 1 - EDGE_THRESHOLD) autoPanY = (smoothY - (1 - EDGE_THRESHOLD)) / EDGE_THRESHOLD; // Down
+
+                // Visual Feedback for Edge
+                if (Math.abs(autoPanX) > 0 || Math.abs(autoPanY) > 0) {
+                    cameraContainer.classList.add('edge-active');
+                    // Reset 1:1 drag anchor so it doesn't jump when returning to center
+                    panStartRaw = { x: smoothX, y: smoothY };
                 } else {
-                    const width = window.innerWidth;
-                    const height = window.innerHeight;
+                    cameraContainer.classList.remove('edge-active');
 
-                    // Calculate Delta for one frame
-                    const sensitivity = 4.0;
-                    const dx = (smoothX - panStart.x) * width * sensitivity;
-                    const dy = (smoothY - panStart.y) * height * sensitivity;
+                    // B. Direct 1:1 Dragging (if in center safe zone)
+                    if (panStartRaw === null) {
+                        panStartRaw = { x: smoothX, y: smoothY };
+                    } else {
+                        const sensitivity = 4.0;
+                        const dx = (smoothX - panStartRaw.x) * window.innerWidth * sensitivity;
+                        const dy = (smoothY - panStartRaw.y) * window.innerHeight * sensitivity;
 
-                    // Direct Pan without inertia during grab
-                    map.panBy([-dx, -dy], { animate: false });
+                        // Apply
+                        map.panBy([-dx, -dy], { animate: false });
 
-                    // Store Velocity for release
-                    panVelocityX = dx;
-                    panVelocityY = dy;
+                        // Velocity for inertia
+                        panVelocityX = dx;
+                        panVelocityY = dy;
 
-                    // Reset start to calculate fresh delta next frame
-                    panStart = { x: smoothX, y: smoothY };
+                        // Reset anchor
+                        panStartRaw = { x: smoothX, y: smoothY };
+                    }
                 }
 
             } else {
-                // *** ZOOM MODE ***
-                isPanning = false; // Release Pan -> Momentum takes over in updatePhysics()
+                // *** ZOOM MODE (Rate Control) ***
+                isPanning = false; // Release pan (inertia happens in loop)
+                autoPanX = 0;
+                autoPanY = 0;
+                cameraContainer.classList.remove('edge-active');
 
                 cardPan.classList.remove('active');
                 cardZoom.classList.add('active');
 
-                panStart = null;
+                panStartRaw = null;
 
-                // Threshold
-                if (pinchStartDist === null) {
-                    pinchStartDist = smoothPinchDist;
-                    pinchStartZoom = targetZoom; // Base on CURRENT TARGET
-                } else {
-                    // Calculate Scale Factor
-                    const distDelta = smoothPinchDist - pinchStartDist;
+                // Rate Control Logic:
+                // "Closed" (Pinch) = Zoom Out
+                // "Spread" (Open) = Zoom In
+                // "Neutral" (Half Open) = Stop
+                // This allows holding a pose to zoom continuously without clutching.
 
-                    if (Math.abs(distDelta) > 0.01) {
-                        const zoomSpeed = 8.0;
-                        // Apply to TARGET, let physics loop handle smoothness
-                        targetZoom = pinchStartZoom + (distDelta * zoomSpeed);
+                // Define Distances (Normalized 0.0 to approx 0.5)
+                const PINCH_GAP = smoothPinchDist; // 0.0 (touching) to 0.4 (spread)
 
-                        // Clamp Zoom
-                        if (targetZoom < 0) targetZoom = 0;
-                        if (targetZoom > 22) targetZoom = 22;
-                    }
+                // Thresholds
+                const ZOOM_OUT_THRESH = 0.06; // < This = Zoom Out
+                const ZOOM_IN_THRESH = 0.18;  // > This = Zoom In
+
+                const currentZoomLevel = targetZoom;
+
+                if (PINCH_GAP < ZOOM_OUT_THRESH) {
+                    // Holding Pinch -> Zoom OUT
+                    // Speed proportional to how tight? (Hard to measure tightness, just constant or linear from thresh)
+                    // Let's do constant comfortable speed
+                    targetZoom -= 0.15; // Smooth decrement
+                } else if (PINCH_GAP > ZOOM_IN_THRESH) {
+                    // Holding Spread -> Zoom IN
+                    // Speed proportional to spread
+                    const intensity = (PINCH_GAP - ZOOM_IN_THRESH) * 2.0; // 0 to ~0.5
+                    targetZoom += 0.1 + intensity;
                 }
+
+                // Clamp
+                if (targetZoom < 0) targetZoom = 0;
+                if (targetZoom > 22) targetZoom = 22;
             }
         }
 
@@ -460,8 +506,8 @@
                     onFrame: async () => {
                         await hands.send({ image: videoElement });
                     },
-                    width: 320,
-                    height: 240
+                    width: 640,
+                    height: 480
                 });
 
                 await camera.start();
