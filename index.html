@@ -4,13 +4,14 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Google Earth Style (Hand Controlled)</title>
+    <title>Gesture Controlled 3D Globe</title>
 
     <!-- Mapbox GL JS -->
-    <script src='https://api.mapbox.com/mapbox-gl-js/v3.1.2/mapbox-gl.js'></script>
-    <link href='https://api.mapbox.com/mapbox-gl-js/v3.1.2/mapbox-gl.css' rel='stylesheet' />
+    <script src='https://api.mapbox.com/mapbox-gl-js/v3.1.0/mapbox-gl.js'></script>
+    <link href='https://api.mapbox.com/mapbox-gl-js/v3.1.0/mapbox-gl.css' rel='stylesheet' />
 
-    <!-- MediaPipe -->
+    <!-- MediaPipe Hands -->
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/control_utils/control_utils.js"
         crossorigin="anonymous"></script>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js"
@@ -21,62 +22,54 @@
         body {
             margin: 0;
             padding: 0;
-            background: #000;
             overflow: hidden;
-            font-family: sans-serif;
+            background: #000;
+            font-family: 'Segoe UI', sans-serif;
         }
 
         #map {
-            width: 100vw;
-            height: 100vh;
+            position: absolute;
+            top: 0;
+            bottom: 0;
+            width: 100%;
         }
 
-        #ui-layer {
+        /* Camera & Debug Overlay */
+        .controls-container {
             position: absolute;
             top: 20px;
-            left: 50%;
-            transform: translateX(-50%);
+            right: 20px;
+            z-index: 10;
+            background: rgba(0, 0, 0, 0.6);
+            backdrop-filter: blur(10px);
+            padding: 15px;
+            border-radius: 16px;
+            border: 1px solid rgba(255, 255, 255, 0.1);
             display: flex;
             flex-direction: column;
             align-items: center;
-            gap: 10px;
-            z-index: 100;
-            pointer-events: none;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
         }
 
-        #status-box {
-            background: rgba(0, 0, 0, 0.7);
-            color: #fff;
-            padding: 12px 20px;
-            border-radius: 30px;
-            border: 1px solid rgba(255, 255, 255, 0.3);
-            font-family: monospace;
-            text-align: center;
-            min-width: 250px;
-        }
-
-        #cam-container {
-            position: absolute;
-            bottom: 20px;
-            right: 20px;
-            width: 240px;
-            height: 180px;
-            background: #111;
-            border-radius: 15px;
+        .camera-feed {
+            position: relative;
+            width: 200px;
+            height: 150px;
+            border-radius: 12px;
             overflow: hidden;
-            border: 2px solid #555;
-            display: none;
+            background: #222;
         }
 
-        #input-video {
+        #input_video {
+            position: absolute;
             width: 100%;
             height: 100%;
             object-fit: cover;
             transform: scaleX(-1);
-            opacity: 0.8;
+            /* Mirror effect */
         }
 
-        #output-canvas {
+        #output_canvas {
             position: absolute;
             top: 0;
             left: 0;
@@ -85,145 +78,168 @@
             transform: scaleX(-1);
         }
 
-        button {
-            pointer-events: auto;
-            background: linear-gradient(135deg, #10b981, #3b82f6);
+        .status-badge {
+            margin-top: 10px;
             color: white;
-            border: none;
-            padding: 12px 30px;
-            border-radius: 50px;
-            font-weight: bold;
-            cursor: pointer;
-            box-shadow: 0 4px 15px rgba(0, 200, 100, 0.4);
+            font-size: 14px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
         }
 
-        .mapboxgl-ctrl-logo,
-        .mapboxgl-ctrl-attrib {
-            display: none !important;
+        .status-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: #ff4444;
+            box-shadow: 0 0 8px #ff4444;
+        }
+
+        .status-dot.active {
+            background: #00ff88;
+            box-shadow: 0 0 8px #00ff88;
+        }
+
+        /* Instructions */
+        .instructions {
+            position: absolute;
+            bottom: 30px;
+            left: 50%;
+            transform: translateX(-50%);
+            color: rgba(255, 255, 255, 0.9);
+            text-align: center;
+            pointer-events: none;
+            text-shadow: 0 2px 4px rgba(0, 0, 0, 0.8);
+            z-index: 10;
+        }
+
+        .gesture-icon {
+            font-size: 24px;
+            margin-bottom: 5px;
+            display: block;
+        }
+
+        /* Loader */
+        .loader {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            color: white;
+            z-index: 20;
+            font-size: 1.2rem;
+            display: none;
         }
     </style>
 </head>
 
 <body>
 
-    <div id="ui-layer">
-        <div id="status-box">Ready - Click Start</div>
-        <button id="start-btn">START CAMERA</button>
-    </div>
-
-    <div id="cam-container">
-        <video id="input-video" playsinline></video>
-        <canvas id="output-canvas"></canvas>
-    </div>
-
     <div id="map"></div>
+    <div class="loader" id="loader">Initializing Camera & Map...</div>
+
+    <div class="controls-container">
+        <div class="camera-feed">
+            <video id="input_video" disablePictureInPicture playsinline></video>
+            <canvas id="output_canvas"></canvas>
+        </div>
+        <div class="status-badge">
+            <div class="status-dot" id="statusDot"></div>
+            <span id="statusText">Camera Off</span>
+        </div>
+    </div>
+
+    <div class="instructions">
+        <div>🖐️ <strong>Open Hand</strong> to Pan</div>
+        <div style="margin-top: 8px;">👌 <strong>Pinch</strong> to Zoom</div>
+    </div>
 
     <script>
-        // --- 1. MAPBOX SETUP WITH GOOGLE TILES ---
+        // --- CONFIGURATION ---
+        // REPLACE WITH YOUR MAPBOX TOKEN
         mapboxgl.accessToken = 'pk.eyJ1IjoibW9oYW1tZWQtMTMzMSIsImEiOiJjbWlsaWh1anAxM2kzM2dyNHR5eTU4am9hIn0.arsZikWNpuoceyWdnM30VA';
 
-        const map = new mapboxgl.Map({
-            container: 'map',
-            projection: 'globe',
-            style: {
-                version: 8,
-                sources: {
-                    // Actual Google Satellite Tiles
-                    'google-satellite': {
-                        type: 'raster',
-                        tiles: ['https://mt1.google.com/vt/lyrs=s&x={x}&y={y}&z={z}'],
-                        tileSize: 256
-                    },
-                    // Mapbox DEM for 3D Terrain
-                    'mapbox-dem': {
-                        type: 'raster-dem',
-                        url: 'mapbox://mapbox.mapbox-terrain-dem-v1',
-                        tileSize: 512,
-                        maxzoom: 14
-                    }
-                },
-                layers: [
-                    {
-                        id: 'google-satellite-layer',
-                        type: 'raster',
-                        source: 'google-satellite',
-                        paint: {}
-                    }
-                ]
-            },
-            zoom: 1.5,
-            center: [30, 20],
-            pitch: 0
-        });
+        // --- STATE ---
+        let map;
+        let isCameraRunning = false;
+        let previousLandmarks = null;
+        let isPinching = false;
+        let isPanning = false;
 
-        map.on('style.load', () => {
-            // Enable 3D Terrain
-            map.setTerrain({ 'source': 'mapbox-dem', 'exaggeration': 1.5 });
+        // Smoothing variables
+        const SMOOTHING_FACTOR = 0.15; // Lower = smoother but more lag
+        let smoothedHandX = 0;
+        let smoothedHandY = 0;
+        let previousPinchDist = 0;
 
-            // Add Atmosphere
-            map.setFog({
-                'range': [0.5, 10],
-                'color': 'white',
-                'horizon-blend': 0.1,
-                'star-intensity': 0.8
-            });
-        });
-
-
-        // --- 2. SMART GESTURE LOGIC ---
-
-        // State
-        let state = {
-            mode: 'IDLE', // IDLE, MOVE, ZOOM_IN, ZOOM_OUT, STOP
-            velocity: { bearing: 0, pitch: 0, zoom: 0 },
-            smoothness: 0.05 // Lower = Smoother/Slower
-        };
-
-        function animate() {
-            requestAnimationFrame(animate);
-            if (!map) return;
-
-            // 1. Friction / Smoothing (Decay momentum if no input)
-            if (state.mode === 'STOP') {
-                // Hard Stop
-                state.velocity.bearing = 0;
-                state.velocity.pitch = 0;
-                state.velocity.zoom = 0;
-            }
-
-            // 2. Apply velocities to Map
-            const currentBearing = map.getBearing();
-            const currentPitch = map.getPitch();
-            const currentZoom = map.getZoom();
-
-            // Rotate (Bearing)
-            if (Math.abs(state.velocity.bearing) > 0.001) {
-                map.easeTo({
-                    bearing: currentBearing + state.velocity.bearing,
-                    pitch: currentPitch + state.velocity.pitch,
-                    zoom: currentZoom + state.velocity.zoom,
-                    duration: 0, // Instant update for continuous feel
-                    easing: t => t
-                });
-            } else if (Math.abs(state.velocity.zoom) > 0.001) {
-                // Zoom only update
-                map.easeTo({
-                    zoom: currentZoom + state.velocity.zoom,
-                    duration: 0,
-                    easing: t => t
-                });
-            }
-        }
-        animate();
-
-
-        // --- 3. MEDIAPIPE HANDS WITH SMART DETECTION ---
-        const videoElement = document.getElementById('input-video');
-        const canvasElement = document.getElementById('output-canvas');
+        // DOM Elements
+        const videoElement = document.getElementById('input_video');
+        const canvasElement = document.getElementById('output_canvas');
         const canvasCtx = canvasElement.getContext('2d');
-        const statusBox = document.getElementById('status-box');
+        const statusDot = document.getElementById('statusDot');
+        const statusText = document.getElementById('statusText');
+        const loader = document.getElementById('loader');
+
+        // --- MAP SETUP ---
+        function initMap() {
+            // Check if token is set (simple check)
+            if (mapboxgl.accessToken.includes('ExampleTokenHere')) {
+                alert('Please edit index.html and set your Mapbox Access Token!');
+            }
+
+            map = new mapboxgl.Map({
+                container: 'map',
+                style: {
+                    version: 8,
+                    sources: {
+                        'google-satellite': {
+                            type: 'raster',
+                            tiles: [
+                                'https://mt0.google.com/vt/lyrs=s&x={x}&y={y}&z={z}',
+                                'https://mt1.google.com/vt/lyrs=s&x={x}&y={y}&z={z}',
+                                'https://mt2.google.com/vt/lyrs=s&x={x}&y={y}&z={z}',
+                                'https://mt3.google.com/vt/lyrs=s&x={x}&y={y}&z={z}'
+                            ],
+                            tileSize: 256,
+                            attribution: '© Google Maps'
+                        }
+                    },
+                    layers: [
+                        {
+                            id: 'google-satellite-layer',
+                            type: 'raster',
+                            source: 'google-satellite',
+                            paint: {}
+                        }
+                    ]
+                },
+                projection: 'globe', // The 3D globe projection
+                zoom: 1.5,
+                center: [30, 15],
+                pitch: 0,
+                logoPosition: 'bottom-right',
+                attributionControl: true
+            });
+
+            map.on('style.load', () => {
+                map.setFog({
+                    'color': 'rgb(186, 210, 235)', // Lower atmosphere
+                    'high-color': 'rgb(36, 92, 223)', // Upper atmosphere
+                    'horizon-blend': 0.02, // Atmosphere thickness (default 0.2 at low zooms)
+                    'space-color': 'rgb(11, 11, 25)', // Background color
+                    'star-intensity': 0.6 // Background star brightness (default 0.35 at low zooms )
+                });
+            });
+        }
+
+        // --- GESTURE LOGIC ---
+
+        function calculateDistance(p1, p2) {
+            return Math.hypot(p1.x - p2.x, p1.y - p2.y);
+        }
 
         function onResults(results) {
+            // Draw Hand
             canvasCtx.save();
             canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
             canvasCtx.drawImage(results.image, 0, 0, canvasElement.width, canvasElement.height);
@@ -231,178 +247,143 @@
             if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
                 const landmarks = results.multiHandLandmarks[0];
 
+                // Draw skeleton
                 drawConnectors(canvasCtx, landmarks, HAND_CONNECTIONS, { color: '#00FF00', lineWidth: 2 });
-                drawLandmarks(canvasCtx, landmarks, { color: '#00FFFF', lineWidth: 1 });
+                drawLandmarks(canvasCtx, landmarks, { color: '#FF0000', lineWidth: 1, radius: 2 });
 
-                // --- HEURISTICS ---
-                const wrist = landmarks[0];
-                const thumbTip = landmarks[4];
-                const indexTip = landmarks[8];
-                const middleTip = landmarks[12];
-                const ringTip = landmarks[16];
-                const pinkyTip = landmarks[20];
+                // Process Gestures
+                processGestures(landmarks);
 
-                // 1. Detect FIST (Stop)
-                // Check if all fingertips are close to the wrist (curled)
-                const tips = [indexTip, middleTip, ringTip, pinkyTip];
-                const avgDistToWrist = tips.reduce((sum, tip) => sum + Math.hypot(tip.x - wrist.x, tip.y - wrist.y), 0) / 4;
-                const isFist = avgDistToWrist < 0.35; // Threshold for closed hand
-
-                // 2. Detect PINCH (Zoom Out)
-                const pinchDist = Math.hypot(thumbTip.x - indexTip.x, thumbTip.y - indexTip.y);
-                const isPinch = pinchDist < 0.06;
-
-                // 3. Detect OPEN HAND (Zoom In)
-                // Fingers extended and thumb far from index
-                const isOpen = !isFist && !isPinch && pinchDist > 0.15;
-
-
-                // --- CONTROL MAPPING ---
-
-                // A. Hand Position (Direction)
-                // Center is (0.5, 0.5)
-                const handX = landmarks[9].x; // Use Middle finger MCP (palm centerish)
-                const handY = landmarks[9].y;
-
-                const deadzone = 0.1; // 10% deadzone in center
-                let dirX = (handX - 0.5);
-                let dirY = (handY - 0.5);
-
-                // Apply Deadzone
-                if (Math.abs(dirX) < deadzone) dirX = 0;
-                else dirX = Math.sign(dirX) * (Math.abs(dirX) - deadzone);
-
-                if (Math.abs(dirY) < deadzone) dirY = 0;
-                else dirY = Math.sign(dirY) * (Math.abs(dirY) - deadzone);
-
-
-                let statusText = "";
-                let statusColor = "#fff";
-
-                if (isFist) {
-                    // --- STOP MODE ---
-                    state.mode = 'STOP';
-                    statusText = "🛑 FIST DETECTED: STOPPING";
-                    statusColor = "#ff4444";
-
-                } else if (isPinch) {
-                    // --- ZOOM OUT MODE ---
-                    state.mode = 'ZOOM_OUT';
-                    state.velocity.zoom = -0.02; // Slow constant zoom out
-                    state.velocity.bearing = -dirX * 0.5; // Allow rotation while zooming
-                    state.velocity.pitch = 0;
-
-                    statusText = "🤏 PINCH: ZOOMING OUT";
-                    statusColor = "#ffff00";
-
-                } else if (isOpen) {
-                    // --- ZOOM IN MODE ---
-                    state.mode = 'ZOOM_IN';
-                    state.velocity.zoom = 0.02; // Slow constant zoom in
-                    state.velocity.bearing = -dirX * 0.5; // Allow rotation
-                    state.velocity.pitch = dirY * 0.5;    // Allow tilt
-
-                    statusText = "🖐 OPEN HAND: ZOOMING IN";
-                    statusColor = "#00ff00";
-
-                } else {
-                    // --- NAVIGATION MODE (Neutral) ---
-                    // Just move around without zooming
-                    state.mode = 'MOVE';
-                    state.velocity.zoom = 0;
-
-                    // X controls Bearing (Rotate)
-                    // Y controls Pitch (Tilt Up/Down)
-                    state.velocity.bearing = -dirX * 0.8; // Negative to invert natural feel (drag map) or positive to fly? 
-                    // Let's use: Hand Right -> Camera Rotates Right (Bearing increases? No, Bearing decreases rotates map LEFT). 
-                    // Actually comfortable: Hand Right -> Look Right.
-                    state.velocity.pitch = dirY * 1.0;
-
-                    statusText = `✈️ NAVIGATING`;
-                    if (dirX === 0 && dirY === 0) statusText = "⚓ HOVERING (Center Hand)";
-                }
-
-                statusBox.innerText = statusText;
-                statusBox.style.color = statusColor;
-                statusBox.style.borderColor = statusColor;
-
+                statusText.innerText = "Tracking Hand";
+                statusDot.className = "status-dot active";
             } else {
-                state.mode = 'IDLE';
-                state.velocity = { bearing: 0, pitch: 0, zoom: 0 };
-                statusBox.innerText = "NO HAND FOUND";
-                statusBox.style.color = "#888";
-                statusBox.style.borderColor = "#444";
+                statusText.innerText = "No Hand Detected";
+                statusDot.className = "status-dot";
+                isPanning = false;
+                isPinching = false;
             }
             canvasCtx.restore();
         }
 
-        // Camera Start with Robust Debugging
-        const hands = new Hands({ locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}` });
-        hands.setOptions({ maxNumHands: 1, minDetectionConfidence: 0.5, minTrackingConfidence: 0.5 });
-        hands.onResults(onResults);
+        function processGestures(landmarks) {
+            // 1. Get Palm Center (approximate using WRIST(0), MIDDLE_FINGER_MCP(9), INDEX_FINGER_MCP(5))
+            // Using Index Finger MCP (Knuckle) as main pointer is often more stable for "grabbing"
+            const pointer = landmarks[9]; // Middle finger knuckle
 
-        document.getElementById('start-btn').addEventListener('click', async () => {
-            const btn = document.getElementById('start-btn');
-            const status = document.getElementById('status-box');
+            // 2. Detect Pinch (Thumb Tip 4 & Index Tip 8)
+            const thumbTip = landmarks[4];
+            const indexTip = landmarks[8];
+            const pinchDist = calculateDistance(thumbTip, indexTip);
 
-            btn.style.display = 'none';
-            status.style.color = "#FFD700"; // Gold
-            status.innerText = "Requesting Camera Access...";
+            const PINCH_THRESHOLD = 0.05; // Adjust based on camera
+            const isCurrentlyPinching = pinchDist < PINCH_THRESHOLD;
 
-            // 1. Security Check
-            if (window.location.protocol === 'file:') {
-                alert("⚠️ WARNING: You are running this file directly!");
-                status.innerHTML = "Browser may block camera on local files.<br>Try Firefox or use a local server.";
-                status.style.color = "#FF4444";
-                // We continue anyway just in case it works (Firefox)
-            }
+            // --- SMOOTHING ---
+            // Smooth the pointer coordinates
+            smoothedHandX = smoothedHandX + (pointer.x - smoothedHandX) * SMOOTHING_FACTOR;
+            smoothedHandY = smoothedHandY + (pointer.y - smoothedHandY) * SMOOTHING_FACTOR;
 
-            try {
-                // 2. Request Stream
-                status.innerText = "Please click 'Allow' in the popup...";
-                const stream = await navigator.mediaDevices.getUserMedia({ video: { width: 320, height: 240 } });
+            if (isCurrentlyPinching) {
+                // --- ZOOM ACTION ---
+                if (!isPinching) {
+                    // Start Pinch
+                    isPinching = true;
+                    previousPinchDist = pinchDist;
+                } else {
+                    // Continue Pinch -> Zoom
+                    const zoomSensitivity = 3.0;
+                    const deltaZoom = (pinchDist - previousPinchDist) * zoomSensitivity;
 
-                status.innerText = "Camera Started. Loading AI...";
-                videoElement.srcObject = stream;
-                await videoElement.play();
-
-                // 3. Setup UI
-                document.getElementById('cam-container').style.display = 'block';
-                canvasElement.width = videoElement.videoWidth;
-                canvasElement.height = videoElement.videoHeight;
-
-                status.innerText = "Starting Hand Tracking...";
-                status.style.color = "#00FF00";
-
-                // 4. Start Loop
-                const cameraLoop = async () => {
-                    if (!videoElement.paused && !videoElement.ended) {
-                        try {
-                            await hands.send({ image: videoElement });
-                        } catch (e) {
-                            console.error(e);
-                        }
-                        requestAnimationFrame(cameraLoop);
+                    // Zoom In/Out
+                    if (Math.abs(deltaZoom) > 0.001) {
+                        const currentZoom = map.getZoom();
+                        map.setZoom(currentZoom + deltaZoom);
                     }
-                };
-                cameraLoop();
+                    previousPinchDist = pinchDist;
+                }
+                isPanning = false; // Disable pan while zooming
+            } else {
+                // --- PAN ACTION (Open Hand) ---
+                isPinching = false;
 
+                if (!isPanning) {
+                    isPanning = true;
+                    // Reset previous position logic if needed
+                    previousLandmarks = { x: smoothedHandX, y: smoothedHandY };
+                } else {
+                    const sensitivity = 2.0; // Pan speed
+                    const dx = (smoothedHandX - previousLandmarks.x) * sensitivity;
+                    const dy = (smoothedHandY - previousLandmarks.y) * sensitivity;
+
+                    if (Math.abs(dx) > 0.001 || Math.abs(dy) > 0.001) {
+                        // Mapbox Pan: 
+                        // Note: Hand moving RIGHT in video (after mirror) should move map visual RIGHT (so map center moves LEFT)
+                        // Actually, 'dragging' means if hand moves right, map moves right.
+                        // map.panBy([pixelX, pixelY]) moves the map by pixels.
+                        // We need to convert normalized coords (0-1) to screen pixels
+
+                        const width = window.innerWidth;
+                        const height = window.innerHeight;
+
+                        // Invert X because camera is mirrored (already handled by CSS scaleX, but coordinates from MediaPipe are 0-1 from left-right of ORIGINAL image)
+                        // If mirrored CSS:
+                        // Visual Left = Real Right.
+                        // MediaPipe x=0 is Real Left.
+                        // If I move my hand Visual Right, Real Left, x decreases.
+                        // Let's stick to: Delta X positive -> Map moves Right.
+
+                        // We use panBy:
+                        // -dx (move view right) -> need negative value
+                        map.panBy([-dx * width, -dy * height], { animate: false });
+                    }
+
+                    previousLandmarks = { x: smoothedHandX, y: smoothedHandY };
+                }
+            }
+        }
+
+        // --- INITIALIZATION ---
+        async function startCamera() {
+            loader.style.display = 'block';
+            try {
+                const hands = new Hands({
+                    locateFile: (file) => {
+                        return `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`;
+                    }
+                });
+
+                hands.setOptions({
+                    maxNumHands: 1,
+                    modelComplexity: 1,
+                    minDetectionConfidence: 0.7,
+                    minTrackingConfidence: 0.7
+                });
+
+                hands.onResults(onResults);
+
+                // Use Camera Utils
+                const camera = new Camera(videoElement, {
+                    onFrame: async () => {
+                        await hands.send({ image: videoElement });
+                    },
+                    width: 320,
+                    height: 240
+                });
+
+                await camera.start();
+                loader.style.display = 'none';
+                isCameraRunning = true;
+                statusText.innerText = "Camera Active";
             } catch (e) {
                 console.error(e);
-                btn.style.display = 'inline-block'; // Show button again
-                document.getElementById('cam-container').style.display = 'none';
-
-                status.style.color = "#FF0000";
-                if (e.name === 'NotAllowedError' || e.name === 'PermissionDeniedError') {
-                    status.innerText = "❌ Permission Denied. Please Refresh and Allow Camera.";
-                } else if (e.name === 'NotFoundError') {
-                    status.innerText = "❌ No Camera Found on this device.";
-                } else {
-                    status.innerText = "❌ Error: " + e.message;
-                }
-                alert("Camera Failed: " + e.message);
+                loader.innerText = "Camera Error: " + e.message;
             }
-        });
+        }
+
+        // Start everything
+        initMap();
+        startCamera();
+
     </script>
 </body>
 
