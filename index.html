@@ -336,14 +336,25 @@
             canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
             canvasCtx.drawImage(results.image, 0, 0, canvasElement.width, canvasElement.height);
 
+            // Check if BOTH landmarks and handedness are present
             if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
                 const landmarks = results.multiHandLandmarks[0];
-                const handedness = results.multiHandedness[0]; // { index: 0, score: 0.9, label: 'Left'/'Right' }
+
+                // Safety check for handedness (sometimes undefined in first few frames)
+                let handedness = { label: 'Right' }; // Default
+                if (results.multiHandedness && results.multiHandedness.length > 0) {
+                    handedness = results.multiHandedness[0];
+                }
 
                 drawConnectors(canvasCtx, landmarks, HAND_CONNECTIONS, { color: '#00ff88', lineWidth: 2 });
                 drawLandmarks(canvasCtx, landmarks, { color: '#ffffff', lineWidth: 1, radius: 2 });
 
-                processGestures(landmarks, handedness);
+                // Wrap in try-catch to prevent video freezing on math error
+                try {
+                    processGestures(landmarks, handedness);
+                } catch (e) {
+                    console.warn("Gesture Error:", e);
+                }
 
                 statusText.innerText = "Tracking Active";
                 statusDot.className = "status-dot active";
@@ -381,95 +392,74 @@
             // --- STATE MACHINE ---
 
             if (isFist) {
-                // *** PAN MODE (Hybrid: 1:1 Center + Continuous Edge) ***
+                // *** PAN MODE ***
                 isPanning = true;
-
                 cardPan.classList.add('active');
                 cardZoom.classList.remove('active');
 
-                // A. Check Edges for "Infinite Flight"
-                // Edges: < 0.15 or > 0.85
+                // Edges logic remains same...
                 const EDGE_THRESHOLD = 0.20;
-                autoPanX = 0;
-                autoPanY = 0;
+                autoPanX = 0; autoPanY = 0;
 
-                // Center is 0.5, 0.5
-                // X Axis
-                if (smoothX < EDGE_THRESHOLD) autoPanX = -(EDGE_THRESHOLD - smoothX) / EDGE_THRESHOLD; // Left (-1 to 0)
-                if (smoothX > 1 - EDGE_THRESHOLD) autoPanX = (smoothX - (1 - EDGE_THRESHOLD)) / EDGE_THRESHOLD; // Right (0 to 1)
+                if (smoothX < EDGE_THRESHOLD) autoPanX = -(EDGE_THRESHOLD - smoothX) / EDGE_THRESHOLD;
+                if (smoothX > 1 - EDGE_THRESHOLD) autoPanX = (smoothX - (1 - EDGE_THRESHOLD)) / EDGE_THRESHOLD;
+                if (smoothY < EDGE_THRESHOLD) autoPanY = -(EDGE_THRESHOLD - smoothY) / EDGE_THRESHOLD;
+                if (smoothY > 1 - EDGE_THRESHOLD) autoPanY = (smoothY - (1 - EDGE_THRESHOLD)) / EDGE_THRESHOLD;
 
-                // Y Axis
-                if (smoothY < EDGE_THRESHOLD) autoPanY = -(EDGE_THRESHOLD - smoothY) / EDGE_THRESHOLD; // Up
-                if (smoothY > 1 - EDGE_THRESHOLD) autoPanY = (smoothY - (1 - EDGE_THRESHOLD)) / EDGE_THRESHOLD; // Down
-
-                // Visual Feedback for Edge
                 if (Math.abs(autoPanX) > 0 || Math.abs(autoPanY) > 0) {
                     cameraContainer.classList.add('edge-active');
-                    // Reset 1:1 drag anchor so it doesn't jump when returning to center
                     panStartRaw = { x: smoothX, y: smoothY };
                 } else {
                     cameraContainer.classList.remove('edge-active');
-
-                    // B. Direct 1:1 Dragging (if in center safe zone)
                     if (panStartRaw === null) {
                         panStartRaw = { x: smoothX, y: smoothY };
                     } else {
                         const sensitivity = 4.0;
                         const dx = (smoothX - panStartRaw.x) * window.innerWidth * sensitivity;
                         const dy = (smoothY - panStartRaw.y) * window.innerHeight * sensitivity;
-
-                        // Apply
                         map.panBy([-dx, -dy], { animate: false });
-
-                        // Velocity for inertia
-                        panVelocityX = dx;
-                        panVelocityY = dy;
-
-                        // Reset anchor
+                        panVelocityX = dx; panVelocityY = dy;
                         panStartRaw = { x: smoothX, y: smoothY };
                     }
                 }
 
             } else {
-                // *** ZOOM MODE (Palm vs Back) ***
-                isPanning = false; // Release pan (inertia happens in loop)
-                autoPanX = 0;
-                autoPanY = 0;
+                // *** ZOOM MODE ***
+                isPanning = false;
+                autoPanX = 0; autoPanY = 0;
                 cameraContainer.classList.remove('edge-active');
 
                 cardPan.classList.remove('active');
                 cardZoom.classList.add('active');
-
                 panStartRaw = null;
 
-                // Rate Control Logic:
-                // "Closed" (Pinch) = Zoom Out
-                // "Spread" (Open) = Zoom In
-                // "Neutral" (Half Open) = Stop
-                // This allows holding a pose to zoom continuously without clutching.
+                // Is Palm or Back?
+                // Cross product of vectors (Wrist->Index) x (Wrist->Pinky)
+                const x1 = landmarks[5].x - landmarks[0].x;
+                const y1 = landmarks[5].y - landmarks[0].y;
+                const x2 = landmarks[17].x - landmarks[0].x;
+                const y2 = landmarks[17].y - landmarks[0].y;
 
-                // Define Distances (Normalized 0.0 to approx 0.5)
-                const PINCH_GAP = smoothPinchDist; // 0.0 (touching) to 0.4 (spread)
+                // Z-component of cross product
+                const zVal = x1 * y2 - y1 * x2;
 
-                // Thresholds
-                const ZOOM_OUT_THRESH = 0.06; // < This = Zoom Out
-                const ZOOM_IN_THRESH = 0.18;  // > This = Zoom In
+                let isPalm = false;
+                const label = handedness.label || 'Right'; // Safe access
 
-                const currentZoomLevel = targetZoom;
+                // Logic adjusted for mirrored/non-mirrored typical setups
+                // Usually: Right Hand Palm = Positive Z. Left Hand Palm = Negative Z.
+                if (label === 'Right') isPalm = (zVal > 0);
+                else isPalm = (zVal < 0);
 
-                if (PINCH_GAP < ZOOM_OUT_THRESH) {
-                    // Holding Pinch -> Zoom OUT
-                    // Speed proportional to how tight? (Hard to measure tightness, just constant or linear from thresh)
-                    // Let's do constant comfortable speed
-                    targetZoom -= 0.15; // Smooth decrement
-                } else if (PINCH_GAP > ZOOM_IN_THRESH) {
-                    // Holding Spread -> Zoom IN
-                    // Speed proportional to spread
-                    const intensity = (PINCH_GAP - ZOOM_IN_THRESH) * 2.0; // 0 to ~0.5
-                    targetZoom += 0.1 + intensity;
+                const ZOOM_SPEED = 0.15;
+
+                // Apply
+                if (isPalm) {
+                    targetZoom += ZOOM_SPEED; // Zoom In
+                } else {
+                    targetZoom -= ZOOM_SPEED; // Zoom Out
                 }
 
-                // Clamp
                 if (targetZoom < 0) targetZoom = 0;
                 if (targetZoom > 22) targetZoom = 22;
             }
