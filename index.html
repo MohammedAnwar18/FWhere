@@ -40,24 +40,26 @@
             top: 20px;
             right: 20px;
             z-index: 10;
-            background: rgba(0, 0, 0, 0.6);
-            backdrop-filter: blur(10px);
-            padding: 15px;
-            border-radius: 16px;
-            border: 1px solid rgba(255, 255, 255, 0.1);
+            background: rgba(10, 10, 10, 0.85);
+            backdrop-filter: blur(12px);
+            padding: 12px;
+            border-radius: 20px;
+            border: 1px solid rgba(255, 255, 255, 0.08);
             display: flex;
             flex-direction: column;
             align-items: center;
-            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+            width: 220px;
         }
 
         .camera-feed {
             position: relative;
-            width: 200px;
-            height: 150px;
+            width: 100%;
+            height: 140px;
             border-radius: 12px;
             overflow: hidden;
             background: #222;
+            margin-bottom: 12px;
         }
 
         #input_video {
@@ -78,10 +80,18 @@
             transform: scaleX(-1);
         }
 
+        .status-container {
+            width: 100%;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 0 5px;
+        }
+
         .status-badge {
-            margin-top: 10px;
-            color: white;
-            font-size: 14px;
+            color: rgba(255, 255, 255, 0.9);
+            font-size: 13px;
+            font-weight: 500;
             display: flex;
             align-items: center;
             gap: 8px;
@@ -93,30 +103,52 @@
             border-radius: 50%;
             background: #ff4444;
             box-shadow: 0 0 8px #ff4444;
+            transition: all 0.3s ease;
         }
 
         .status-dot.active {
             background: #00ff88;
-            box-shadow: 0 0 8px #00ff88;
+            box-shadow: 0 0 10px #00ff88;
         }
 
-        /* Instructions */
-        .instructions {
+        /* Modern Instructions Overlay */
+        .hud-overlay {
             position: absolute;
-            bottom: 30px;
+            bottom: 40px;
             left: 50%;
             transform: translateX(-50%);
-            color: rgba(255, 255, 255, 0.9);
-            text-align: center;
-            pointer-events: none;
-            text-shadow: 0 2px 4px rgba(0, 0, 0, 0.8);
+            display: flex;
+            gap: 20px;
             z-index: 10;
         }
 
-        .gesture-icon {
-            font-size: 24px;
-            margin-bottom: 5px;
-            display: block;
+        .hud-card {
+            background: rgba(0, 0, 0, 0.7);
+            backdrop-filter: blur(8px);
+            padding: 12px 20px;
+            border-radius: 50px;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            color: white;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            font-size: 14px;
+            opacity: 0.6;
+            transition: all 0.3s ease;
+        }
+
+        .hud-card.active {
+            background: rgba(0, 120, 255, 0.2);
+            border-color: rgba(0, 120, 255, 0.5);
+            opacity: 1;
+            transform: translateY(-5px);
+            box-shadow: 0 5px 20px rgba(0, 100, 255, 0.2);
+        }
+
+        .hud-icon {
+            width: 24px;
+            height: 24px;
+            fill: currentColor;
         }
 
         /* Loader */
@@ -143,34 +175,48 @@
             <video id="input_video" disablePictureInPicture playsinline></video>
             <canvas id="output_canvas"></canvas>
         </div>
-        <div class="status-badge">
-            <div class="status-dot" id="statusDot"></div>
-            <span id="statusText">Camera Off</span>
+        <div class="status-container">
+            <div class="status-badge">
+                <div class="status-dot" id="statusDot"></div>
+                <span id="statusText">System Ready</span>
+            </div>
         </div>
     </div>
 
-    <div class="instructions">
-        <div>🖐️ <strong>Open Hand</strong> to Pan</div>
-        <div style="margin-top: 8px;">👌 <strong>Pinch</strong> to Zoom</div>
+    <div class="hud-overlay">
+        <div class="hud-card" id="card-pan">
+            <svg class="hud-icon" viewBox="0 0 24 24">
+                <path d="M18,9V4h-2v5h-2V2h-2v7h-2V5H8v4H6v6.5c0,4.69,3.81,8.5,8.5,8.5s8.5-3.81,8.5-8.5V9H18z" />
+            </svg>
+            <span>Fist to Pan</span>
+        </div>
+        <div class="hud-card" id="card-zoom">
+            <svg class="hud-icon" viewBox="0 0 24 24">
+                <path
+                    d="M15.5,14h-0.79l-0.28-0.27C15.41,12.59,16,11.11,16,9.5C16,5.91,13.09,3,9.5,3S3,5.91,3,9.5S5.91,16,9.5,16 c1.61,0,3.09-0.59,4.23-1.57l0.27,0.28v0.79l5,4.99L20.49,19L15.5,14z M9.5,14C7.01,14,5,11.99,5,9.5S7.01,5,9.5,5S14,7.01,14,9.5 S11.99,14,9.5,14z" />
+                <path d="M12,10h-2v2H9v-2H7V9h2V7h1v2h2V10z" />
+            </svg>
+            <span>Pinch & Move Up/Down</span>
+        </div>
     </div>
 
     <script>
         // --- CONFIGURATION ---
-        // REPLACE WITH YOUR MAPBOX TOKEN
-        mapboxgl.accessToken = 'pk.eyJ1IjoibW9oYW1tZWQtMTMzMSIsImEiOiJjbWlsaWh1anAxM2kzM2dyNHR5eTU4am9hIn0.arsZikWNpuoceyWdnM30VA';
+        mapboxgl.accessToken = 'pk.eyJ1IjoibW9oYW1tZWQt1MzMSIsImEiOiJjbWlsaWh1anAxM2kzM2dyNHR5eTU4am9hIn0.arsZikWNpuoceyWdnM30VA';
 
         // --- STATE ---
         let map;
         let isCameraRunning = false;
-        let previousLandmarks = null;
-        let isPinching = false;
-        let isPanning = false;
 
-        // Smoothing variables
-        const SMOOTHING_FACTOR = 0.15; // Lower = smoother but more lag
-        let smoothedHandX = 0;
-        let smoothedHandY = 0;
-        let previousPinchDist = 0;
+        // Gesture Logic State
+        let pinchStartY = null;
+        let pinchStartZoom = null;
+        let panStart = null;
+
+        // Smoothing
+        const SMOOTHING_FACTOR = 0.15;
+        let smoothX = 0;
+        let smoothY = 0;
 
         // DOM Elements
         const videoElement = document.getElementById('input_video');
@@ -180,13 +226,11 @@
         const statusText = document.getElementById('statusText');
         const loader = document.getElementById('loader');
 
+        const cardPan = document.getElementById('card-pan');
+        const cardZoom = document.getElementById('card-zoom');
+
         // --- MAP SETUP ---
         function initMap() {
-            // Check if token is set (simple check)
-            if (mapboxgl.accessToken.includes('ExampleTokenHere')) {
-                alert('Please edit index.html and set your Mapbox Access Token!');
-            }
-
             map = new mapboxgl.Map({
                 container: 'map',
                 style: {
@@ -195,39 +239,31 @@
                         'google-satellite': {
                             type: 'raster',
                             tiles: [
-                                'https://mt0.google.com/vt/lyrs=s&x={x}&y={y}&z={z}',
-                                'https://mt1.google.com/vt/lyrs=s&x={x}&y={y}&z={z}',
-                                'https://mt2.google.com/vt/lyrs=s&x={x}&y={y}&z={z}',
-                                'https://mt3.google.com/vt/lyrs=s&x={x}&y={y}&z={z}'
+                                'https://mt0.google.com/vt/lyrs=s&x={x}&y={y}&z={z}'
                             ],
                             tileSize: 256,
-                            attribution: '© Google Maps'
+                            attribution: 'Google Maps'
                         }
                     },
                     layers: [
-                        {
-                            id: 'google-satellite-layer',
-                            type: 'raster',
-                            source: 'google-satellite',
-                            paint: {}
-                        }
+                        { id: 'google-satellite-layer', type: 'raster', source: 'google-satellite' }
                     ]
                 },
-                projection: 'globe', // The 3D globe projection
+                projection: 'globe',
                 zoom: 1.5,
                 center: [30, 15],
                 pitch: 0,
                 logoPosition: 'bottom-right',
-                attributionControl: true
+                attributionControl: false
             });
 
             map.on('style.load', () => {
                 map.setFog({
-                    'color': 'rgb(186, 210, 235)', // Lower atmosphere
-                    'high-color': 'rgb(36, 92, 223)', // Upper atmosphere
-                    'horizon-blend': 0.02, // Atmosphere thickness (default 0.2 at low zooms)
-                    'space-color': 'rgb(11, 11, 25)', // Background color
-                    'star-intensity': 0.6 // Background star brightness (default 0.35 at low zooms )
+                    'color': 'rgb(186, 210, 235)',
+                    'high-color': 'rgb(36, 92, 223)',
+                    'horizon-blend': 0.02,
+                    'space-color': 'rgb(11, 11, 25)',
+                    'star-intensity': 0.6
                 });
             });
         }
@@ -239,7 +275,6 @@
         }
 
         function onResults(results) {
-            // Draw Hand
             canvasCtx.save();
             canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
             canvasCtx.drawImage(results.image, 0, 0, canvasElement.width, canvasElement.height);
@@ -247,98 +282,113 @@
             if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
                 const landmarks = results.multiHandLandmarks[0];
 
-                // Draw skeleton
-                drawConnectors(canvasCtx, landmarks, HAND_CONNECTIONS, { color: '#00FF00', lineWidth: 2 });
-                drawLandmarks(canvasCtx, landmarks, { color: '#FF0000', lineWidth: 1, radius: 2 });
+                // Styles
+                const handStyle = { color: '#00ff88', lineWidth: 2 };
+                const landmarkStyle = { color: '#ffffff', lineWidth: 1, radius: 2 };
 
-                // Process Gestures
+                drawConnectors(canvasCtx, landmarks, HAND_CONNECTIONS, handStyle);
+                drawLandmarks(canvasCtx, landmarks, landmarkStyle);
+
                 processGestures(landmarks);
 
-                statusText.innerText = "Tracking Hand";
+                statusText.innerText = "Tracking Active";
                 statusDot.className = "status-dot active";
             } else {
-                statusText.innerText = "No Hand Detected";
+                statusText.innerText = "No Hand";
                 statusDot.className = "status-dot";
-                isPanning = false;
-                isPinching = false;
+                resetGestures();
             }
             canvasCtx.restore();
         }
 
+        function resetGestures() {
+            panStart = null;
+            pinchStartY = null;
+            cardPan.classList.remove('active');
+            cardZoom.classList.remove('active');
+        }
+
         function processGestures(landmarks) {
-            // 1. Get Palm Center (approximate using WRIST(0), MIDDLE_FINGER_MCP(9), INDEX_FINGER_MCP(5))
-            // Using Index Finger MCP (Knuckle) as main pointer is often more stable for "grabbing"
-            const pointer = landmarks[9]; // Middle finger knuckle
+            // Pointer used for movement (Index Knuckle)
+            const pointer = landmarks[5];
 
-            // 2. Detect Pinch (Thumb Tip 4 & Index Tip 8)
-            const thumbTip = landmarks[4];
-            const indexTip = landmarks[8];
-            const pinchDist = calculateDistance(thumbTip, indexTip);
+            // 1. Smooth the pointer
+            smoothX += (pointer.x - smoothX) * SMOOTHING_FACTOR;
+            smoothY += (pointer.y - smoothY) * SMOOTHING_FACTOR;
 
-            const PINCH_THRESHOLD = 0.05; // Adjust based on camera
-            const isCurrentlyPinching = pinchDist < PINCH_THRESHOLD;
+            // 2. Detect PINCH (Thumb tip 4 to Index tip 8)
+            const pinchDist = calculateDistance(landmarks[4], landmarks[8]);
+            const isPinching = pinchDist < 0.05;
 
-            // --- SMOOTHING ---
-            // Smooth the pointer coordinates
-            smoothedHandX = smoothedHandX + (pointer.x - smoothedHandX) * SMOOTHING_FACTOR;
-            smoothedHandY = smoothedHandY + (pointer.y - smoothedHandY) * SMOOTHING_FACTOR;
+            // 3. Detect FIST (Simplified)
+            // Check if fingertips 12 (Middle), 16 (Ring), 20 (Pinky) are close to wrist (0)
+            const middleTipDist = calculateDistance(landmarks[12], landmarks[0]);
+            const ringTipDist = calculateDistance(landmarks[16], landmarks[0]);
 
-            if (isCurrentlyPinching) {
-                // --- ZOOM ACTION ---
-                if (!isPinching) {
-                    // Start Pinch
-                    isPinching = true;
-                    previousPinchDist = pinchDist;
+            // Thresholds
+            const FIST_THRESHOLD = 0.35; // If fingers are curled in
+            const isFist = (middleTipDist < FIST_THRESHOLD && ringTipDist < FIST_THRESHOLD) && !isPinching;
+
+            // --- STATE MACHINE ---
+
+            if (isPinching) {
+                // *** ZOOM MODE ***
+                cardZoom.classList.add('active');
+                cardPan.classList.remove('active');
+
+                // Disengage Pan
+                panStart = null;
+
+                if (pinchStartY === null) {
+                    // Start Zoom Session
+                    pinchStartY = smoothY;
+                    pinchStartZoom = map.getZoom();
                 } else {
-                    // Continue Pinch -> Zoom
-                    const zoomSensitivity = 3.0;
-                    const deltaZoom = (pinchDist - previousPinchDist) * zoomSensitivity;
+                    // Ongoing Zoom
+                    // Calculate vertical delta
+                    const dy = smoothY - pinchStartY;
+                    // Sensitivity
+                    const zoomSensitivity = 5.0;
+                    // Move DOWN (positive dy) -> Zoom OUT? Or In?
+                    // User Request: "Logical". 
+                    // Pulling Down = Pulling closer = Zoom In? 
+                    // Pushing Up = Pushing away = Zoom Out?
+                    // Let's implement: Down = Zoom In. Up = Zoom Out.
 
-                    // Zoom In/Out
-                    if (Math.abs(deltaZoom) > 0.001) {
-                        const currentZoom = map.getZoom();
-                        map.setZoom(currentZoom + deltaZoom);
-                    }
-                    previousPinchDist = pinchDist;
+                    const newZoom = pinchStartZoom + (dy * zoomSensitivity);
+                    map.setZoom(newZoom);
                 }
-                isPanning = false; // Disable pan while zooming
-            } else {
-                // --- PAN ACTION (Open Hand) ---
-                isPinching = false;
 
-                if (!isPanning) {
-                    isPanning = true;
-                    // Reset previous position logic if needed
-                    previousLandmarks = { x: smoothedHandX, y: smoothedHandY };
+            } else if (isFist) {
+                // *** PAN MODE ***
+                cardPan.classList.add('active');
+                cardZoom.classList.remove('active');
+
+                // Disengage Zoom
+                pinchStartY = null;
+
+                if (panStart === null) {
+                    panStart = { x: smoothX, y: smoothY };
                 } else {
-                    const sensitivity = 2.0; // Pan speed
-                    const dx = (smoothedHandX - previousLandmarks.x) * sensitivity;
-                    const dy = (smoothedHandY - previousLandmarks.y) * sensitivity;
+                    const sensitivity = 3.5;
+                    const dx = (smoothX - panStart.x) * sensitivity;
+                    const dy = (smoothY - panStart.y) * sensitivity;
 
                     if (Math.abs(dx) > 0.001 || Math.abs(dy) > 0.001) {
-                        // Mapbox Pan: 
-                        // Note: Hand moving RIGHT in video (after mirror) should move map visual RIGHT (so map center moves LEFT)
-                        // Actually, 'dragging' means if hand moves right, map moves right.
-                        // map.panBy([pixelX, pixelY]) moves the map by pixels.
-                        // We need to convert normalized coords (0-1) to screen pixels
-
                         const width = window.innerWidth;
                         const height = window.innerHeight;
-
-                        // Invert X because camera is mirrored (already handled by CSS scaleX, but coordinates from MediaPipe are 0-1 from left-right of ORIGINAL image)
-                        // If mirrored CSS:
-                        // Visual Left = Real Right.
-                        // MediaPipe x=0 is Real Left.
-                        // If I move my hand Visual Right, Real Left, x decreases.
-                        // Let's stick to: Delta X positive -> Map moves Right.
-
-                        // We use panBy:
-                        // -dx (move view right) -> need negative value
+                        // Mapbox panBy uses pixels. 
+                        // Hand moves Right (-dx because mirror) -> Map moves Right.
                         map.panBy([-dx * width, -dy * height], { animate: false });
-                    }
 
-                    previousLandmarks = { x: smoothedHandX, y: smoothedHandY };
+                        // Update start pos to avoid acceleration 
+                        panStart = { x: smoothX, y: smoothY };
+                    }
                 }
+
+            } else {
+                // *** HOVER / IDLE ***
+                resetGestures();
             }
         }
 
