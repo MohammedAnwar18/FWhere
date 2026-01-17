@@ -4,16 +4,11 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Realistic Earth - Hand Controlled</title>
+    <title>Google Earth Style (Hand Controlled)</title>
 
-    <!-- Three.js -->
-    <script type="importmap">
-        {
-            "imports": {
-                "three": "https://unpkg.com/three@0.160.0/build/three.module.js"
-            }
-        }
-    </script>
+    <!-- Mapbox GL JS -->
+    <script src='https://api.mapbox.com/mapbox-gl-js/v3.1.2/mapbox-gl.js'></script>
+    <link href='https://api.mapbox.com/mapbox-gl-js/v3.1.2/mapbox-gl.css' rel='stylesheet' />
 
     <!-- MediaPipe -->
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/control_utils/control_utils.js"
@@ -31,7 +26,7 @@
             font-family: sans-serif;
         }
 
-        #canvas-container {
+        #map {
             width: 100vw;
             height: 100vh;
         }
@@ -51,40 +46,40 @@
 
         #status-box {
             background: rgba(0, 0, 0, 0.7);
-            color: #0f0;
-            padding: 15px 25px;
+            color: #fff;
+            padding: 12px 20px;
             border-radius: 30px;
-            border: 1px solid rgba(255, 255, 255, 0.2);
+            border: 1px solid rgba(255, 255, 255, 0.3);
             font-family: monospace;
             text-align: center;
-            min-width: 300px;
+            min-width: 250px;
         }
 
         #cam-container {
             position: absolute;
             bottom: 20px;
             right: 20px;
-            width: 320px;
+            width: 240px;
             height: 180px;
             background: #111;
             border-radius: 15px;
             overflow: hidden;
             border: 2px solid #555;
             display: none;
-            /* Hidden until started */
         }
 
         #input-video {
-            position: absolute;
             width: 100%;
             height: 100%;
             object-fit: cover;
             transform: scaleX(-1);
-            opacity: 0.6;
+            opacity: 0.8;
         }
 
         #output-canvas {
             position: absolute;
+            top: 0;
+            left: 0;
             width: 100%;
             height: 100%;
             transform: scaleX(-1);
@@ -92,14 +87,19 @@
 
         button {
             pointer-events: auto;
-            background: linear-gradient(135deg, #6366f1, #a855f7);
+            background: linear-gradient(135deg, #10b981, #3b82f6);
             color: white;
             border: none;
             padding: 12px 30px;
             border-radius: 50px;
             font-weight: bold;
             cursor: pointer;
-            box-shadow: 0 4px 15px rgba(100, 100, 255, 0.4);
+            box-shadow: 0 4px 15px rgba(0, 200, 100, 0.4);
+        }
+
+        .mapboxgl-ctrl-logo,
+        .mapboxgl-ctrl-attrib {
+            display: none !important;
         }
     </style>
 </head>
@@ -107,8 +107,8 @@
 <body>
 
     <div id="ui-layer">
-        <div id="status-box">Waiting for Camera...</div>
-        <button id="start-btn">START CAMERA & GESTURES</button>
+        <div id="status-box">Ready - Click Start</div>
+        <button id="start-btn">START CAMERA</button>
     </div>
 
     <div id="cam-container">
@@ -116,104 +116,108 @@
         <canvas id="output-canvas"></canvas>
     </div>
 
-    <div id="canvas-container"></div>
+    <div id="map"></div>
 
-    <script type="module">
-        import * as THREE from 'three';
+    <script>
+        // --- 1. MAPBOX SETUP WITH GOOGLE TILES ---
+        mapboxgl.accessToken = 'pk.eyJ1IjoibW9oYW1tZWQtMTMzMSIsImEiOiJjbWlsaWh1anAxM2kzM2dyNHR5eTU4am9hIn0.arsZikWNpuoceyWdnM30VA';
 
-        // --- 1. THREE.JS SETUP ---
-        const scene = new THREE.Scene();
-        scene.background = new THREE.Color(0x020202);
-
-        const camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 1000);
-        camera.position.z = 18; // Initial Zoom
-
-        const renderer = new THREE.WebGLRenderer({ antialias: true });
-        renderer.setSize(window.innerWidth, window.innerHeight);
-        renderer.setPixelRatio(window.devicePixelRatio);
-        document.getElementById('canvas-container').appendChild(renderer.domElement);
-
-        // Lighting
-        const ambientLight = new THREE.AmbientLight(0xffffff, 0.2); // Soft light
-        scene.add(ambientLight);
-
-        const sunLight = new THREE.DirectionalLight(0xffffff, 2.0);
-        sunLight.position.set(50, 20, 30);
-        scene.add(sunLight);
-
-        // --- 2. EARTH CREATION (High Res) ---
-        const textureLoader = new THREE.TextureLoader();
-        const earthGroup = new THREE.Group();
-        scene.add(earthGroup);
-
-        // A. Earth Sphere (High Res 8k Texture)
-        const earthGeo = new THREE.SphereGeometry(5, 128, 128); // Higher segment count for smoothness
-        const earthMat = new THREE.MeshStandardMaterial({
-            map: textureLoader.load('https://unpkg.com/three-globe/example/img/earth-blue-marble.jpg'),
-            bumpMap: textureLoader.load('https://unpkg.com/three-globe/example/img/earth-topology.png'),
-            bumpScale: 0.2,
-            roughness: 0.5,
-            metalness: 0.1
+        const map = new mapboxgl.Map({
+            container: 'map',
+            projection: 'globe',
+            style: {
+                version: 8,
+                sources: {
+                    // Actual Google Satellite Tiles
+                    'google-satellite': {
+                        type: 'raster',
+                        tiles: ['https://mt1.google.com/vt/lyrs=s&x={x}&y={y}&z={z}'],
+                        tileSize: 256
+                    },
+                    // Mapbox DEM for 3D Terrain
+                    'mapbox-dem': {
+                        type: 'raster-dem',
+                        url: 'mapbox://mapbox.mapbox-terrain-dem-v1',
+                        tileSize: 512,
+                        maxzoom: 14
+                    }
+                },
+                layers: [
+                    {
+                        id: 'google-satellite-layer',
+                        type: 'raster',
+                        source: 'google-satellite',
+                        paint: {}
+                    }
+                ]
+            },
+            zoom: 1.5,
+            center: [30, 20],
+            pitch: 0
         });
-        const earth = new THREE.Mesh(earthGeo, earthMat);
-        earthGroup.add(earth);
 
-        // B. Cloud Layer (Moving)
-        const cloudGeo = new THREE.SphereGeometry(5.08, 64, 64);
-        const cloudMat = new THREE.MeshStandardMaterial({
-            map: textureLoader.load('https://raw.githubusercontent.com/mrdoob/three.js/master/examples/textures/planets/earth_clouds_2048.png'),
-            transparent: true,
-            opacity: 0.3,
-            blending: THREE.AdditiveBlending,
-            side: THREE.DoubleSide
+        map.on('style.load', () => {
+            // Enable 3D Terrain
+            map.setTerrain({ 'source': 'mapbox-dem', 'exaggeration': 1.5 });
+
+            // Add Atmosphere
+            map.setFog({
+                'range': [0.5, 10],
+                'color': 'white',
+                'horizon-blend': 0.1,
+                'star-intensity': 0.8
+            });
         });
-        const clouds = new THREE.Mesh(cloudGeo, cloudMat);
-        earthGroup.add(clouds);
-
-        // C. Stars
-        const starsGeo = new THREE.BufferGeometry();
-        const starPos = [];
-        for (let i = 0; i < 3000; i++) {
-            const x = (Math.random() - 0.5) * 600;
-            const y = (Math.random() - 0.5) * 600;
-            const z = (Math.random() - 0.5) * 600;
-            starPos.push(x, y, z);
-        }
-        starsGeo.setAttribute('position', new THREE.Float32BufferAttribute(starPos, 3));
-        const stars = new THREE.Points(starsGeo, new THREE.PointsMaterial({ color: 0xffffff, size: 0.5 }));
-        scene.add(stars);
 
 
-        // --- 3. GESTURE LOGIC VARIABLES ---
-        let targetRotationY = 0;
-        let targetCameraZ = 18; // Default Zoom
-        let isHandDetected = false;
+        // --- 2. SMART GESTURE LOGIC ---
 
-        // --- 4. ANIMATION LOOP ---
+        // State
+        let state = {
+            mode: 'IDLE', // IDLE, MOVE, ZOOM_IN, ZOOM_OUT, STOP
+            velocity: { bearing: 0, pitch: 0, zoom: 0 },
+            smoothness: 0.05 // Lower = Smoother/Slower
+        };
+
         function animate() {
             requestAnimationFrame(animate);
+            if (!map) return;
 
-            // Smooth Interpolation (Physics-like feel)
-            // Rotate Earth
-            earth.rotation.y += (targetRotationY - earth.rotation.y) * 0.05; // Softer rotation
-            clouds.rotation.y += 0.0003; // Auto-move clouds slightly
+            // 1. Friction / Smoothing (Decay momentum if no input)
+            if (state.mode === 'STOP') {
+                // Hard Stop
+                state.velocity.bearing = 0;
+                state.velocity.pitch = 0;
+                state.velocity.zoom = 0;
+            }
 
-            // Camera Zoom
-            camera.position.z += (targetCameraZ - camera.position.z) * 0.1;
+            // 2. Apply velocities to Map
+            const currentBearing = map.getBearing();
+            const currentPitch = map.getPitch();
+            const currentZoom = map.getZoom();
 
-            renderer.render(scene, camera);
+            // Rotate (Bearing)
+            if (Math.abs(state.velocity.bearing) > 0.001) {
+                map.easeTo({
+                    bearing: currentBearing + state.velocity.bearing,
+                    pitch: currentPitch + state.velocity.pitch,
+                    zoom: currentZoom + state.velocity.zoom,
+                    duration: 0, // Instant update for continuous feel
+                    easing: t => t
+                });
+            } else if (Math.abs(state.velocity.zoom) > 0.001) {
+                // Zoom only update
+                map.easeTo({
+                    zoom: currentZoom + state.velocity.zoom,
+                    duration: 0,
+                    easing: t => t
+                });
+            }
         }
         animate();
 
-        // Window Resize
-        window.addEventListener('resize', () => {
-            camera.aspect = window.innerWidth / window.innerHeight;
-            camera.updateProjectionMatrix();
-            renderer.setSize(window.innerWidth, window.innerHeight);
-        });
 
-
-        // --- 5. MEDIAPIPE HANDS SETUP ---
+        // --- 3. MEDIAPIPE HANDS WITH SMART DETECTION ---
         const videoElement = document.getElementById('input-video');
         const canvasElement = document.getElementById('output-canvas');
         const canvasCtx = canvasElement.getContext('2d');
@@ -225,97 +229,141 @@
             canvasCtx.drawImage(results.image, 0, 0, canvasElement.width, canvasElement.height);
 
             if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
-                isHandDetected = true;
                 const landmarks = results.multiHandLandmarks[0];
 
-                // Draw Skeleton
-                drawConnectors(canvasCtx, landmarks, HAND_CONNECTIONS, { color: '#00FF00', lineWidth: 4 });
-                drawLandmarks(canvasCtx, landmarks, { color: '#FF0000', lineWidth: 2 });
+                drawConnectors(canvasCtx, landmarks, HAND_CONNECTIONS, { color: '#00FF00', lineWidth: 2 });
+                drawLandmarks(canvasCtx, landmarks, { color: '#00FFFF', lineWidth: 1 });
 
-                // --- LOGIC ---
-                // 1. Rotation (Index Finger Tip X)
-                const x = landmarks[8].x;
-                let xOffset = x - 0.5; // -0.5 (Left) to 0.5 (Right)
+                // --- HEURISTICS ---
+                const wrist = landmarks[0];
+                const thumbTip = landmarks[4];
+                const indexTip = landmarks[8];
+                const middleTip = landmarks[12];
+                const ringTip = landmarks[16];
+                const pinkyTip = landmarks[20];
 
-                // Deadzone
-                if (Math.abs(xOffset) < 0.05) xOffset = 0;
+                // 1. Detect FIST (Stop)
+                // Check if all fingertips are close to the wrist (curled)
+                const tips = [indexTip, middleTip, ringTip, pinkyTip];
+                const avgDistToWrist = tips.reduce((sum, tip) => sum + Math.hypot(tip.x - wrist.x, tip.y - wrist.y), 0) / 4;
+                const isFist = avgDistToWrist < 0.35; // Threshold for closed hand
 
-                // Update Target Rotation (Continuous spin based on hand pos)
-                if (Math.abs(xOffset) > 0) {
-                    targetRotationY += xOffset * 0.1; // Speed
-                }
+                // 2. Detect PINCH (Zoom Out)
+                const pinchDist = Math.hypot(thumbTip.x - indexTip.x, thumbTip.y - indexTip.y);
+                const isPinch = pinchDist < 0.06;
 
-                // 2. Adaptive Zoom (City Level Logic)
-                const thumb = landmarks[4];
-                const index = landmarks[8];
-                const dist = Math.sqrt(Math.pow(thumb.x - index.x, 2) + Math.pow(thumb.y - index.y, 2));
+                // 3. Detect OPEN HAND (Zoom In)
+                // Fingers extended and thumb far from index
+                const isOpen = !isFist && !isPinch && pinchDist > 0.15;
 
-                // Calculate Distance to Surface
-                const distToSurface = Math.max(0.1, camera.position.z - 5); // Radius is 5
 
-                // Sensitivity decreases as we get closer (Precision Mode)
-                const zoomSpeed = 0.05 * distToSurface;
+                // --- CONTROL MAPPING ---
 
-                let zoomAction = "--";
+                // A. Hand Position (Direction)
+                // Center is (0.5, 0.5)
+                const handX = landmarks[9].x; // Use Middle finger MCP (palm centerish)
+                const handY = landmarks[9].y;
 
-                if (dist < 0.05) { // PINCH -> ZOOM OUT
-                    targetCameraZ += zoomSpeed * 5; // Faster out
-                    zoomAction = "ZOOM OUT";
-                } else if (dist > 0.15) { // OPEN -> ZOOM IN
-                    targetCameraZ -= zoomSpeed * 5;
-                    zoomAction = "ZOOM IN (Closing)";
+                const deadzone = 0.1; // 10% deadzone in center
+                let dirX = (handX - 0.5);
+                let dirY = (handY - 0.5);
+
+                // Apply Deadzone
+                if (Math.abs(dirX) < deadzone) dirX = 0;
+                else dirX = Math.sign(dirX) * (Math.abs(dirX) - deadzone);
+
+                if (Math.abs(dirY) < deadzone) dirY = 0;
+                else dirY = Math.sign(dirY) * (Math.abs(dirY) - deadzone);
+
+
+                let statusText = "";
+                let statusColor = "#fff";
+
+                if (isFist) {
+                    // --- STOP MODE ---
+                    state.mode = 'STOP';
+                    statusText = "🛑 FIST DETECTED: STOPPING";
+                    statusColor = "#ff4444";
+
+                } else if (isPinch) {
+                    // --- ZOOM OUT MODE ---
+                    state.mode = 'ZOOM_OUT';
+                    state.velocity.zoom = -0.02; // Slow constant zoom out
+                    state.velocity.bearing = -dirX * 0.5; // Allow rotation while zooming
+                    state.velocity.pitch = 0;
+
+                    statusText = "🤏 PINCH: ZOOMING OUT";
+                    statusColor = "#ffff00";
+
+                } else if (isOpen) {
+                    // --- ZOOM IN MODE ---
+                    state.mode = 'ZOOM_IN';
+                    state.velocity.zoom = 0.02; // Slow constant zoom in
+                    state.velocity.bearing = -dirX * 0.5; // Allow rotation
+                    state.velocity.pitch = dirY * 0.5;    // Allow tilt
+
+                    statusText = "🖐 OPEN HAND: ZOOMING IN";
+                    statusColor = "#00ff00";
+
                 } else {
-                    zoomAction = "HOLD";
+                    // --- NAVIGATION MODE (Neutral) ---
+                    // Just move around without zooming
+                    state.mode = 'MOVE';
+                    state.velocity.zoom = 0;
+
+                    // X controls Bearing (Rotate)
+                    // Y controls Pitch (Tilt Up/Down)
+                    state.velocity.bearing = -dirX * 0.8; // Negative to invert natural feel (drag map) or positive to fly? 
+                    // Let's use: Hand Right -> Camera Rotates Right (Bearing increases? No, Bearing decreases rotates map LEFT). 
+                    // Actually comfortable: Hand Right -> Look Right.
+                    state.velocity.pitch = dirY * 1.0;
+
+                    statusText = `✈️ NAVIGATING`;
+                    if (dirX === 0 && dirY === 0) statusText = "⚓ HOVERING (Center Hand)";
                 }
 
-                // EXTREME ZOOM LIMITS
-                // Allow getting very close (5.1) -> 0.1 units from surface
-                if (targetCameraZ < 5.2) targetCameraZ = 5.2;
-                if (targetCameraZ > 50) targetCameraZ = 50;
-
-                statusBox.innerHTML = `HAND DETECTED<br>Action: ${zoomAction}<br>Surface Dist: ${distToSurface.toFixed(2)}`;
-                statusBox.style.color = "#0f0";
+                statusBox.innerText = statusText;
+                statusBox.style.color = statusColor;
+                statusBox.style.borderColor = statusColor;
 
             } else {
-                isHandDetected = false;
-                statusBox.innerHTML = `NO HAND DETECTED`;
-                statusBox.style.color = "#ff0";
+                state.mode = 'IDLE';
+                state.velocity = { bearing: 0, pitch: 0, zoom: 0 };
+                statusBox.innerText = "NO HAND FOUND";
+                statusBox.style.color = "#888";
+                statusBox.style.borderColor = "#444";
             }
             canvasCtx.restore();
         }
 
+        // Camera Start
         const hands = new Hands({ locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}` });
-        hands.setOptions({
-            maxNumHands: 1,
-            modelComplexity: 1,
-            minDetectionConfidence: 0.5,
-            minTrackingConfidence: 0.5
-        });
+        hands.setOptions({ maxNumHands: 1, minDetectionConfidence: 0.5, minTrackingConfidence: 0.5 });
         hands.onResults(onResults);
 
-        // Start Camera Button
         document.getElementById('start-btn').addEventListener('click', async () => {
             document.getElementById('start-btn').style.display = 'none';
-            document.getElementById('status-box').innerText = "Starting Camera...";
+            statusBox.innerText = "Loading Camera...";
 
-            const stream = await navigator.mediaDevices.getUserMedia({ video: { width: 640, height: 360 } });
-            videoElement.srcObject = stream;
-            await videoElement.play();
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia({ video: { width: 320, height: 240 } });
+                videoElement.srcObject = stream;
+                await videoElement.play();
 
-            document.getElementById('cam-container').style.display = 'block';
+                document.getElementById('cam-container').style.display = 'block';
+                canvasElement.width = videoElement.videoWidth;
+                canvasElement.height = videoElement.videoHeight;
 
-            // Adjust canvas size
-            canvasElement.width = videoElement.videoWidth;
-            canvasElement.height = videoElement.videoHeight;
-
-            // Loop
-            const cameraLoop = async () => {
-                await hands.send({ image: videoElement });
-                requestAnimationFrame(cameraLoop);
-            };
-            cameraLoop();
+                const cameraLoop = async () => {
+                    await hands.send({ image: videoElement });
+                    requestAnimationFrame(cameraLoop);
+                };
+                cameraLoop();
+            } catch (e) {
+                alert("Camera Error: " + e.message);
+                statusBox.innerText = "Camera Failed";
+            }
         });
-
     </script>
 </body>
 
